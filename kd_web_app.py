@@ -23,6 +23,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# 状态初始化
+if 'map_placeholder' not in st.session_state:
+    st.session_state.map_placeholder = None
+
 # 应用标题
 st.title("🌱 稀土元素土壤Kd值可视化")
 
@@ -352,8 +356,15 @@ with col_left:
             ax.plot(x, y, 'ro', markersize=10, markeredgecolor='white', 
                    markeredgewidth=2, transform=albers_proj, zorder=5)
         
-        # 显示地图
-        st.pyplot(fig, use_container_width=True)
+        # 使用占位符管理地图组件
+        if st.session_state.map_placeholder is None:
+            st.session_state.map_placeholder = st.empty()
+        
+        with st.session_state.map_placeholder.container():
+            st.pyplot(fig, use_container_width=True)
+        
+        # 关闭图形释放内存
+        plt.close(fig)
         
     except Exception as e:
         st.error(f"地图绘制错误: {str(e)}")
@@ -365,6 +376,11 @@ with col_right:
     
     # 查询结果显示
     if query_button:
+        # 重置地图占位符
+        if st.session_state.map_placeholder is not None:
+            st.session_state.map_placeholder.empty()
+            st.session_state.map_placeholder = None
+        
         params = get_point_parameters(lon, lat, element, depth_suffix, data_info)
         
         if params:
