@@ -3,14 +3,10 @@ import numpy as np
 import rasterio
 from rasterio.warp import transform as coord_transform
 import matplotlib
-matplotlib.use('Agg')  # 使用非交互式后端
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
-import os
 from matplotlib.colors import LinearSegmentedColormap
-import traceback
+import os
 import pandas as pd
 import warnings
 warnings.filterwarnings('ignore')
@@ -39,20 +35,6 @@ if not os.path.exists(DATA_DIR):
     st.info("请将数据文件放置在以下目录: " + DATA_DIR)
     st.stop()
 
-# 初始化session state
-if 'data_cache' not in st.session_state:
-    st.session_state.data_cache = {}
-
-def get_albers_projection():
-    """创建Albers投影（不使用缓存）"""
-    return ccrs.AlbersEqualArea(
-        central_longitude=105,
-        standard_parallels=(25, 47),
-        false_easting=0,
-        false_northing=0,
-        globe=ccrs.Globe(datum="WGS84")
-    )
-
 def wgs84_to_albers(lon, lat, crs):
     """将经纬度转换为Albers坐标"""
     try:
@@ -70,7 +52,6 @@ def create_enhanced_colormap():
 
 def normalize_data(data, method):
     """对数据进行归一化处理"""
-    # 创建数据副本
     data_copy = np.array(data, copy=True)
     
     if np.ma.is_masked(data):
@@ -84,7 +65,6 @@ def normalize_data(data, method):
         return data_copy, 0, 1
     
     if method == "原始数据":
-        # 将负值设为0
         data_copy[data_copy < 0] = 0
         return data_copy, 0, np.max(valid_data)
     
@@ -121,6 +101,7 @@ def load_raster_data(file_path):
             data = src.read(1).astype(np.float32)
             transform_matrix = src.transform
             crs = src.crs
+            bounds = src.bounds
             
             # 处理无效值
             data[~np.isfinite(data)] = np.nan
@@ -129,7 +110,8 @@ def load_raster_data(file_path):
             return {
                 'data': data,
                 'transform': transform_matrix,
-                'crs': crs
+                'crs': crs,
+                'bounds': bounds
             }
     except Exception as e:
         st.error(f"加载文件失败: {str(e)}")
@@ -198,6 +180,49 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
     except Exception as e:
         return None
 
+def create_simple_map(display_data, vmin, vmax, element, depth, norm_method, cmap_choice, marker_point=None):
+    """创建简单的地图（不使用Cartopy）"""
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # 显示栅格数据
+    im = ax.imshow(
+        display_data,
+        cmap=cmap_choice,
+        vmin=vmin,
+        vmax=vmax,
+        aspect='auto',
+        interpolation='nearest'
+    )
+    
+    # 添加颜色条
+    cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, shrink=0.8)
+    cbar.set_label('Kd值 [L/g]', fontsize=10)
+    
+    # 设置标题
+    ax.set_title(f'{element}元素在{depth}土壤中的Kd值分布 ({norm_method})', fontsize=14, pad=20)
+    
+    # 设置坐标轴标签
+    ax.set_xlabel('列索引', fontsize=10)
+    ax.set_ylabel('行索引', fontsize=10)
+    
+    # 如果有标记点，添加标记
+    if marker_point is not None:
+        row, col = marker_point
+        ax.plot(col, row, 'ro', markersize=10, markeredgecolor='white', markeredgewidth=2)
+        ax.annotate(f'查询点\n({col}, {row})', 
+                   xy=(col, row), 
+                   xytext=(col+50, row-50),
+                   arrowprops=dict(arrowstyle='->', color='red', lw=2),
+                   fontsize=10,
+                   color='red',
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7))
+    
+    # 添加网格
+    ax.grid(True, alpha=0.3, linestyle='--')
+    
+    plt.tight_layout()
+    return fig
+
 # 侧边栏
 with st.sidebar:
     st.header("📊 参数设置")
@@ -229,6 +254,14 @@ with st.sidebar:
     query_button = st.button("🎯 查询点位", use_container_width=True)
     
     st.markdown("---")
+    
+    display_mode = st.radio(
+        "显示模式",
+        ["简化视图", "地理视图"],
+        index=0,
+        help="地理视图可能在某些环境下不稳定，推荐使用简化视图"
+    )
+    
     show_debug = st.checkbox("显示调试信息", value=False)
 
 # 深度映射
@@ -251,7 +284,8 @@ with col_left:
         st.stop()
     
     # 加载数据
-    data_info = load_raster_data(raster_path)
+    with st.spinner('加载数据中...'):
+        data_info = load_raster_data(raster_path)
     
     if data_info is None:
         st.error("无法加载数据")
@@ -263,10 +297,11 @@ with col_left:
         valid_data = valid_data[np.isfinite(valid_data)]
         if len(valid_data) > 0:
             st.info(f"""
-            数据信息:
+            **数据信息:**
             - 形状: {data_info['data'].shape}
             - 范围: {np.min(valid_data):.4f} ~ {np.max(valid_data):.4f}
             - 平均值: {np.mean(valid_data):.4f}
+            - 中位数: {np.median(valid_data):.4f}
             """)
     
     # 绘制地图
@@ -274,77 +309,90 @@ with col_left:
         # 数据处理
         display_data, vmin, vmax = normalize_data(data_info['data'], norm_method)
         
-        # 创建图形（每次都创建新的）
-        plt.close('all')
-        fig = plt.figure(figsize=(12, 8))
-        
-        # 创建投影
-        albers_proj = get_albers_projection()
-        ax = plt.subplot(111, projection=albers_proj)
-        
-        # 地理要素
-        ax.add_feature(cfeature.LAND, color='#f0f0f0', alpha=0.5)
-        ax.add_feature(cfeature.OCEAN, color='lightblue', alpha=0.3)
-        ax.add_feature(cfeature.BORDERS, linewidth=0.8, edgecolor='gray')
-        ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='gray')
-        
-        # 数据范围
-        img_extent = (-2625683.87495, 2206316.12505, 1877102.875, 5921102.875)
-        
         # 颜色映射
         cmap = 'viridis' if norm_method == "原始数据" else create_enhanced_colormap()
         
-        # 绘制数据
-        im = ax.imshow(
-            display_data,
-            origin='upper',
-            extent=img_extent,
-            transform=albers_proj,
-            cmap=cmap,
-            vmin=vmin,
-            vmax=vmax,
-            alpha=0.9,
-            interpolation='nearest'
-        )
-        
-        # 颜色条
-        cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, shrink=0.8)
-        cbar.set_label('Kd值 [L/g]', fontsize=10)
-        
-        # 标题
-        ax.set_title(f'{element}元素在{depth}土壤中的Kd值分布 ({norm_method})', fontsize=14)
-        
-        # 网格
-        gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
-                         linewidth=0.5, color='gray', alpha=0.5, linestyle='--')
-        gl.top_labels = False
-        gl.right_labels = False
-        
-        # 设置范围
-        ax.set_extent(img_extent, crs=albers_proj)
-        
-        # 查询点标记
+        # 处理查询点
+        marker_point = None
         if query_button:
             x, y = wgs84_to_albers(lon, lat, data_info['crs'])
             if x is not None and y is not None:
-                ax.plot(x, y, 'ro', markersize=10, markeredgecolor='white', 
-                       markeredgewidth=2, transform=albers_proj)
+                row, col = rasterio.transform.rowcol(data_info['transform'], x, y)
+                if (0 <= row < data_info['data'].shape[0] and 0 <= col < data_info['data'].shape[1]):
+                    marker_point = (row, col)
         
-        # 显示图形
-        plt.tight_layout()
-        st.pyplot(fig, clear_figure=True)
-        plt.close(fig)
+        # 创建并显示地图
+        if display_mode == "简化视图":
+            # 使用简单的matplotlib显示
+            fig = create_simple_map(display_data, vmin, vmax, element, depth, norm_method, cmap, marker_point)
+            st.pyplot(fig, clear_figure=True)
+            plt.close(fig)
+        else:
+            # 尝试使用地理投影（可能会出错）
+            st.warning("⚠️ 地理视图模式可能不稳定，如遇到错误请切换到简化视图")
+            try:
+                import cartopy.crs as ccrs
+                import cartopy.feature as cfeature
+                
+                fig = plt.figure(figsize=(12, 8))
+                ax = plt.subplot(111, projection=ccrs.PlateCarree())
+                
+                # 从Albers bounds转换为经纬度
+                # 这里简化处理，使用中国的大致范围
+                extent = [73, 135, 18, 53]  # [西经, 东经, 南纬, 北纬]
+                
+                ax.set_extent(extent, crs=ccrs.PlateCarree())
+                ax.add_feature(cfeature.LAND, color='lightgray', alpha=0.3)
+                ax.add_feature(cfeature.OCEAN, color='lightblue', alpha=0.3)
+                ax.add_feature(cfeature.BORDERS, linewidth=0.5)
+                ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+                
+                # 显示数据（使用PlateCarree投影）
+                im = ax.imshow(
+                    display_data,
+                    origin='upper',
+                    extent=extent,
+                    transform=ccrs.PlateCarree(),
+                    cmap=cmap,
+                    vmin=vmin,
+                    vmax=vmax,
+                    alpha=0.9
+                )
+                
+                # 颜色条
+                cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, shrink=0.8)
+                cbar.set_label('Kd值 [L/g]', fontsize=10)
+                
+                # 标题
+                ax.set_title(f'{element}元素在{depth}土壤中的Kd值分布 ({norm_method})', fontsize=14)
+                
+                # 网格
+                ax.gridlines(draw_labels=True, linewidth=0.5, color='gray', alpha=0.5, linestyle='--')
+                
+                # 查询点标记
+                if query_button:
+                    ax.plot(lon, lat, 'ro', markersize=10, markeredgecolor='white', 
+                           markeredgewidth=2, transform=ccrs.PlateCarree())
+                
+                plt.tight_layout()
+                st.pyplot(fig, clear_figure=True)
+                plt.close(fig)
+                
+            except Exception as e:
+                st.error(f"地理视图加载失败: {str(e)}")
+                st.info("请切换到简化视图模式")
         
     except Exception as e:
         st.error(f"地图绘制错误: {str(e)}")
         if show_debug:
-            st.code(traceback.format_exc())
+            st.code(str(e))
 
 with col_right:
     st.subheader("📍 查询结果")
     
     if query_button:
-        params = get_point_parameters(lon, lat, element, depth_suffix, data_info)
+        with st.spinner('查询中...'):
+            params = get_point_parameters(lon, lat, element, depth_suffix, data_info)
         
         if params:
             st.success("✅ 查询成功")
@@ -372,14 +420,38 @@ with col_right:
                     param_display.append({
                         "参数": param_name,
                         "值": value_str,
-                        "单位": unit
+                        "单位": unit,
+                        "说明": desc
                     })
             
             df = pd.DataFrame(param_display)
             st.dataframe(df, hide_index=True, use_container_width=True)
             
+            # 数据可视化
+            with st.expander("查看参数分布"):
+                if len(param_display) > 1:
+                    fig2, ax2 = plt.subplots(figsize=(8, 4))
+                    param_names = [p["参数"] for p in param_display if p["参数"] != "pH"]
+                    param_values = [params[p] for p in param_names if p in params]
+                    
+                    bars = ax2.bar(param_names, param_values, color='steelblue', alpha=0.7)
+                    ax2.set_ylabel('值')
+                    ax2.set_title('土壤参数分布')
+                    ax2.grid(True, alpha=0.3)
+                    
+                    # 在柱状图上添加数值
+                    for bar, val in zip(bars, param_values):
+                        height = bar.get_height()
+                        ax2.text(bar.get_x() + bar.get_width()/2., height,
+                                f'{val:.2f}' if val >= 1 else f'{val:.4f}',
+                                ha='center', va='bottom', fontsize=8)
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig2, clear_figure=True)
+                    plt.close(fig2)
+            
         else:
-            st.warning("⚠️ 该位置无有效数据")
+            st.warning("⚠️ 该位置无有效数据或超出数据范围")
     else:
         st.info('👆 点击"查询点位"按钮获取数据')
         
@@ -387,10 +459,12 @@ with col_right:
         empty_df = pd.DataFrame({
             "参数": ["Kd", "pH", "SOM", "CEC", "IS", "Ce"],
             "值": ["--"] * 6,
-            "单位": ["L/g", "", "g/kg", "cmol⁺/kg", "mol/L", "mg/kg"]
+            "单位": ["L/g", "", "g/kg", "cmol⁺/kg", "mol/L", "mg/kg"],
+            "说明": ["分配系数", "土壤酸碱度", "有机质含量", "阳离子交换容量", "离子强度", "平衡浓度"]
         })
         st.dataframe(empty_df, hide_index=True, use_container_width=True)
 
 # 页脚
 st.markdown("---")
-st.markdown("🌱 稀土元素土壤Kd值可视化系统")
+st.markdown("🌱 稀土元素土壤Kd值可视化系统 | 支持简化视图和地理视图两种显示模式")
+st.markdown("💡 提示：如遇到显示问题，请使用简化视图模式")
