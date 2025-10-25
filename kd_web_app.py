@@ -12,9 +12,34 @@ from io import BytesIO
 import warnings
 warnings.filterwarnings('ignore')
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+# ==================== 字体修复设置 ====================
+# 设置matplotlib中文字体
+plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei', 'Microsoft YaHei']
 plt.rcParams['axes.unicode_minus'] = False
+
+# 添加全局CSS字体支持
+st.markdown("""
+<style>
+    /* 导入Google中文字体 */
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
+    
+    /* 全局字体设置 */
+    * {
+        font-family: 'Noto Sans SC', 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif !important;
+    }
+    
+    /* 确保所有Streamlit组件使用中文字体 */
+    .stApp, .stSidebar, .stButton>button, .stSelectbox, .stNumberInput, .stTextInput, .stMarkdown {
+        font-family: 'Noto Sans SC', 'Microsoft YaHei', 'SimHei', sans-serif !important;
+    }
+    
+    /* 表格字体 */
+    .dataframe {
+        font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+# ==================== 字体修复结束 ====================
 
 # 页面配置
 st.set_page_config(
@@ -203,12 +228,13 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, mark
     cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02)
     cbar.set_label('Kd值 [L/g]', fontsize=10)
     
-    # 设置标题
-    ax.set_title(f'{element}元素在{depth}土壤中的Kd值分布 ({norm_method})', fontsize=12)
+    # 设置标题 - 确保使用支持的字体
+    ax.set_title(f'{element}元素在{depth}土壤中的Kd值分布 ({norm_method})', 
+                 fontsize=12, fontfamily='DejaVu Sans')
     
     # 设置坐标轴
-    ax.set_xlabel('列索引', fontsize=10)
-    ax.set_ylabel('行索引', fontsize=10)
+    ax.set_xlabel('列索引', fontsize=10, fontfamily='DejaVu Sans')
+    ax.set_ylabel('行索引', fontsize=10, fontfamily='DejaVu Sans')
     
     # 添加网格
     ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
@@ -340,8 +366,8 @@ with col_left:
         with st.spinner('正在生成地图...'):
             img_buf = create_map_image(display_data, vmin, vmax, element, depth, norm_method, marker_point)
             
-        # 显示图像
-        st.image(img_buf, use_column_width=True)
+        # 显示图像 - 修复弃用参数
+        st.image(img_buf, use_container_width=True)  # 修复：use_column_width -> use_container_width
         
     except Exception as e:
         st.error(f"地图生成错误: {str(e)}")
@@ -393,7 +419,7 @@ with col_right:
                 })
         
         df = pd.DataFrame(param_display)
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, use_container_width=True)  # 修复：use_column_width -> use_container_width
         
         # 参数说明
         with st.expander("📖 参数说明"):
@@ -418,7 +444,7 @@ with col_right:
             "值": ["--"] * 6,
             "单位": ["L/g", "", "g/kg", "cmol⁺/kg", "mol/L", "mg/kg"]
         })
-        st.dataframe(empty_df, hide_index=True, use_container_width=True)
+        st.dataframe(empty_df, hide_index=True, use_container_width=True)  # 修复：use_column_width -> use_container_width
 
 # 页脚
 st.markdown("---")
