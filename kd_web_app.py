@@ -3,7 +3,7 @@ import numpy as np
 import rasterio
 from rasterio.warp import transform as coord_transform
 import matplotlib
-matplotlib.use('Agg')  # 使用非交互式后端
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 import os
@@ -12,57 +12,36 @@ from io import BytesIO
 import warnings
 warnings.filterwarnings('ignore')
 
-# ==================== 字体修复设置 ====================
-# 设置matplotlib中文字体
-plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei', 'Microsoft YaHei']
+# ==================== 英文界面设置 ====================
+# 设置matplotlib字体（使用英文默认字体）
+plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
 plt.rcParams['axes.unicode_minus'] = False
 
-# 添加全局CSS字体支持
-st.markdown("""
-<style>
-    /* 导入Google中文字体 */
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
-    
-    /* 全局字体设置 */
-    * {
-        font-family: 'Noto Sans SC', 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif !important;
-    }
-    
-    /* 确保所有Streamlit组件使用中文字体 */
-    .stApp, .stSidebar, .stButton>button, .stSelectbox, .stNumberInput, .stTextInput, .stMarkdown {
-        font-family: 'Noto Sans SC', 'Microsoft YaHei', 'SimHei', sans-serif !important;
-    }
-    
-    /* 表格字体 */
-    .dataframe {
-        font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-# ==================== 字体修复结束 ====================
+# 移除所有中文字体相关的CSS
+# ==================== 字体设置结束 ====================
 
 # 页面配置
 st.set_page_config(
-    page_title="稀土元素土壤Kd值可视化",
+    page_title="REE Soil Kd Value Visualization",
     page_icon="🌱",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # 应用标题
-st.title("🌱 稀土元素土壤Kd值可视化系统")
+st.title("🌱 REE Soil Kd Value Visualization System")
 
 # 设置数据目录
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 # 检查数据目录
 if not os.path.exists(DATA_DIR):
-    st.error(f"数据目录不存在: {DATA_DIR}")
-    st.info("请将数据文件放置在以下目录: " + DATA_DIR)
+    st.error(f"Data directory does not exist: {DATA_DIR}")
+    st.info("Please place data files in the following directory: " + DATA_DIR)
     st.stop()
 
 def wgs84_to_albers(lon, lat, crs):
-    """将经纬度转换为Albers坐标"""
+    """Convert longitude and latitude to Albers coordinates"""
     try:
         x, y = coord_transform('EPSG:4326', crs, [lon], [lat])
         return x[0], y[0]
@@ -70,14 +49,14 @@ def wgs84_to_albers(lon, lat, crs):
         return None, None
 
 def create_enhanced_colormap():
-    """创建增强对比度的颜色映射"""
+    """Create enhanced contrast colormap"""
     colors = ['#00008B', '#0000FF', '#0080FF', '#00BFFF',
              '#00FF80', '#80FF00', '#FFFF00', '#FF8000',
              '#FF0000', '#8B0000']
     return LinearSegmentedColormap.from_list('enhanced_viridis', colors, N=256)
 
 def normalize_data(data, method):
-    """对数据进行归一化处理"""
+    """Normalize data"""
     data_copy = np.array(data, copy=True)
     
     if np.ma.is_masked(data):
@@ -89,11 +68,11 @@ def normalize_data(data, method):
     if len(valid_data) == 0:
         return data_copy, 0, 1
     
-    if method == "原始数据":
+    if method == "Raw Data":
         data_copy[data_copy < 0] = 0
         return data_copy, 0, np.max(valid_data)
     
-    elif method == "百分位数归一化":
+    elif method == "Percentile Normalization":
         p5 = np.percentile(valid_data, 5)
         p95 = np.percentile(valid_data, 95)
         if p95 - p5 > 1e-10:
@@ -102,8 +81,8 @@ def normalize_data(data, method):
             return normalized, 0, 1
         return data_copy, 0, 1
             
-    elif method == "标准差归一化":
-        mean = np.mean(valid_data)
+    elif method == "Standard Deviation Normalization":
+        mean =极光 np.mean(valid_data)
         std = np.std(valid_data)
         if std > 1e-10:
             normalized = (data_copy - mean) / (2 * std) + 0.5
@@ -111,10 +90,10 @@ def normalize_data(data, method):
             return normalized, 0, 1
         return data_copy, 0, 1
             
-    elif method == "线性归一化":
+    elif method == "Linear Normalization":
         min_val = np.min(valid_data)
         max_val = np.max(valid_data)
-        if max_val - min_val > 1e-10:
+        if max_val - min_val > 1极光-10:
             normalized = (data_copy - min_val) / (max_val - min_val)
             return normalized, 0, 1
         return data_copy, 0, 1
@@ -123,7 +102,7 @@ def normalize_data(data, method):
 
 @st.cache_data
 def load_raster_data(file_path):
-    """加载栅格数据"""
+    """Load raster data"""
     try:
         with rasterio.open(file_path) as src:
             data = src.read(1).astype(np.float32)
@@ -131,7 +110,7 @@ def load_raster_data(file_path):
             crs = src.crs
             bounds = src.bounds
             
-            # 处理无效值
+            # Handle invalid values
             data[~np.isfinite(data)] = np.nan
             data = np.ma.masked_invalid(data)
             
@@ -145,7 +124,7 @@ def load_raster_data(file_path):
         return None
 
 def get_point_parameters(lon, lat, element, depth_suffix, data_info):
-    """获取指定点的所有参数值"""
+    """Get all parameters for a specific point"""
     try:
         x, y = wgs84_to_albers(lon, lat, data_info['crs'])
         if x is None or y is None:
@@ -163,11 +142,11 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
         
         params = {"Kd": float(kd_value)}
         
-        # 读取其他参数
+        # Read other parameters
         param_files = {
             "pH": f"ph{depth_suffix}.tif",
             "SOM": f"soc{depth_suffix}.tif",
-            "CEC": f"cec{depth_suffix}.tif",
+            "CEC": f"cec{depth_suffix}.极光tif",
             "Ce": f"{element}.tif"
         }
         
@@ -185,13 +164,13 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
                 except:
                     pass
         
-        # 计算IS
+        # Calculate IS
         ec_file = "T_ECE.tif" if depth_suffix in ["05", "515", "1530"] else "S_ECE.tif"
         ec_path = os.path.join(DATA_DIR, ec_file)
         if os.path.exists(ec_path):
             try:
                 with rasterio.open(ec_path) as src:
-                    ec_value = src.read(1)[row, col]
+                    ec_value = src.read(1)[极光row, col]
                     is_value = max(0.0446 * ec_value - 0.000173, 0)
                     params["IS"] = float(is_value)
             except:
@@ -202,136 +181,164 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
     except Exception:
         return None
 
-def create_map_image(display_data, vmin, vmax, element, depth, norm_method, marker_point=None):
-    """创建地图并返回图像字节流"""
-    # 创建新图形
-    fig = plt.figure(figsize=(10, 6), dpi=100)
+def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point=None):
+    """Create map image with optimized display"""
+    # Create new figure
+    fig = plt.figure(figsize=(12, 8), dpi=100)
     ax = fig.add_subplot(111)
     
-    # 选择颜色映射
-    if norm_method == "原始数据":
+    # Choose colormap
+    if norm_method == "Raw Data":
         cmap = 'viridis'
     else:
         cmap = create_enhanced_colormap()
     
-    # 显示数据
+    # ==================== Map Display Optimization ====================
+    # Get data bounds
+    bounds = data_info['bounds']
+    
+    # Calculate appropriate display range (reduce map scale, minimize whitespace)
+    width = bounds.right - bounds.left
+    height = bounds.top - bounds.bottom
+    
+    # Add appropriate margins (smaller than before)
+    margin_x = width * 0.05  # Only 5% margin
+    margin_y = height * 0.05
+    
+    # Set display range
+    extent = [
+        bounds.left - margin_x,
+        bounds.right + margin_x, 
+        bounds.bottom - margin_y,
+        bounds.top + margin_y
+    ]
+    
+    # Display data - use optimized range
     im = ax.imshow(
         display_data,
         cmap=cmap,
         vmin=vmin,
         vmax=vmax,
-        aspect='auto',
-        interpolation='nearest'
+        extent=extent,  # Use optimized range
+        aspect='auto',   # Auto adjust aspect ratio
+        interpolation='nearest',
+        origin='upper'
     )
+    # ==================== Map Display Optimization End ====================
     
-    # 添加颜色条
+    # Add colorbar
     cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02)
-    cbar.set_label('Kd值 [L/g]', fontsize=10)
+    cbar.set_label('Kd Value [L/g]', fontsize=10)
     
-    # 设置标题 - 确保使用支持的字体
-    ax.set_title(f'{element}元素在{depth}土壤中的Kd值分布 ({norm_method})', 
-                 fontsize=12, fontfamily='DejaVu Sans')
+    # Set title
+    title_text = f'{element} Kd Distribution in {depth} Soil ({norm_method})'
+    ax.set_title(title_text, fontsize=12)
     
-    # 设置坐标轴
-    ax.set_xlabel('列索引', fontsize=10, fontfamily='DejaVu Sans')
-    ax.set_ylabel('行索引', fontsize=10, fontfamily='DejaVu Sans')
+    # Set axis labels
+    ax.set_xlabel('East Coordinate (m)', fontsize=10)
+    ax.set_ylabel('North Coordinate (m)', fontsize=10)
     
-    # 添加网格
-    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+    # Add grid - finer and lighter
+    ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
     
-    # 添加查询点标记
+    # Add query point marker
     if marker_point is not None:
         row, col = marker_point
-        ax.plot(col, row, 'ro', markersize=8, markeredgecolor='white', markeredgewidth=2)
+        # Calculate actual coordinates of marker point
+        x, y = rasterio.transform.xy(data_info['transform'], row, col)
+        ax.plot(x, y, 'ro', markersize=10, markeredgecolor='white', markeredgewidth=2)
+        
+        label_text = 'Query Point'
+            
         ax.annotate(
-            '查询点',
-            xy=(col, row),
-            xytext=(col + 20, row - 20),
+            label_text,
+            xy=(x, y),
+            xytext=(x + width * 0.02, y - height * 0.02),
             fontsize=9,
             color='red',
             arrowprops=dict(arrowstyle='->', color='red', lw=1.5)
         )
     
-    # 调整布局
-    plt.tight_layout()
+    # Adjust layout - more compact
+    plt.tight_layout(pad=2.0)
     
-    # 保存到字节流
+    # Save to byte stream
     buf = BytesIO()
     plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
     buf.seek(0)
     
-    # 关闭图形
+    # Close figure
     plt.close(fig)
     
     return buf
 
-# 侧边栏
+# Sidebar
 with st.sidebar:
-    st.header("📊 参数设置")
+    st.header("📊 Parameter Settings")
     
     element = st.selectbox(
-        "稀土元素",
+        "Rare Earth Element",
         ["La", "Ce", "Pr", "Nd", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Y"],
-        help="选择要显示的稀土元素"
+        help="Select rare earth element to display"
     )
     
     depth = st.selectbox(
-        "土壤深度",
+        "Soil Depth",
         ["0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm"],
-        help="选择土壤采样深度"
+        help="Select soil sampling depth"
     )
     
     norm_method = st.selectbox(
-        "归一化方法",
-        ["原始数据", "百分位数归一化", "标准差归一化", "线性归一化"],
-        help="选择数据归一化方法"
+        "Normalization Method",
+        ["Raw Data", "Percentile Normalization", "Standard Deviation Normalization", "Linear Normalization"],
+        help="Select data normalization method"
     )
     
     st.markdown("---")
     
-    st.header("🔍 经纬度查询")
+    st.header("🔍 Coordinate Query")
     col1, col2 = st.columns(2)
     with col1:
-        lon = st.number_input("经度", min_value=73.0, max_value=135.0, value=105.0, step=0.1)
-    with col2:
-        lat = st.number_input("纬度", min_value=18.0, max_value=53.0, value=35.0, step=0.1)
+        lon = st.number_input("Longitude", min_value=73.0, max_value=135.0, value=105.0, step=0.1)
+    with极光 col2:
+        lat = st.number_input("Latitude", min_value=18.0, max_value=53.0, value=35.0, step=0.1)
     
-    query_button = st.button("🎯 查询点位", use_container_width=True, type="primary")
+    query_button = st.button("🎯 Query Point", use_container_width=True, type="primary")
     
     st.markdown("---")
-    show_stats = st.checkbox("显示统计信息", value=False)
+    show_stats = st.checkbox("Show Statistics", value=False)
 
-# 深度映射
+# Depth mapping
 depth_mapping = {
     "0-5cm": "05", "5-15cm": "515", "15-30cm": "1530",
     "30-60cm": "3060", "60-100cm": "60100"
 }
 depth_suffix = depth_mapping[depth]
 
-# 文件路径
+# File path
 raster_filename = f"prediction_result_{element}{depth_suffix}_raw.tif"
 raster_path = os.path.join(DATA_DIR, raster_filename)
 
-# 创建两列布局
+# Create two-column layout
 col_left, col_right = st.columns([2, 1])
 
 with col_left:
-    st.subheader("📊 Kd值空间分布图")
+    st.subheader("📊 Kd Value Spatial Distribution")
     
     if not os.path.exists(raster_path):
-        st.error(f"❌ 未找到文件: {raster_filename}")
-        st.info("请检查数据文件是否存在")
+        st.error(f"❌ File not found: {raster_filename}")
+        st.info("Please check if data files exist")
         st.stop()
     
-    # 加载数据
-    with st.spinner('正在加载数据...'):
+    # Load data
+    with st.spinner('Loading data...'):
         data_info = load_raster_data(raster_path)
     
     if data_info is None:
-        st.error("无法加载数据文件")
+        st.error("Unable to load data file")
         st.stop()
     
-    # 显示统计信息
+    # Show statistics
     if show_stats:
         valid_data = data_info['data'].compressed() if np.ma.is_masked(data_info['data']) else data_info['data'].flatten()
         valid_data = valid_data[np.isfinite(valid_data)]
@@ -339,20 +346,20 @@ with col_left:
         if len(valid_data) > 0:
             col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
             with col_stat1:
-                st.metric("最小值", f"{np.min(valid_data):.4f}")
+                st.metric("Min", f"{np.min(valid_data):.4f}")
             with col_stat2:
-                st.metric("最大值", f"{np.max(valid_data):.4f}")
+                st.metric("Max", f"{np.max(valid_data):.4f}")
             with col_stat3:
-                st.metric("平均值", f"{np.mean(valid_data):.4f}")
+                st.metric("Mean", f"{np.mean(valid_data):.4f}")
             with col_stat4:
-                st.metric("中位数", f"{np.median(valid_data):.4f}")
+                st.metric("Median", f"{np.median(valid_data):.4f}")
     
-    # 数据处理和显示
+    # Data processing and display
     try:
-        # 归一化处理
+        # Normalization
         display_data, vmin, vmax = normalize_data(data_info['data'], norm_method)
         
-        # 处理查询
+        # Handle query
         marker_point = None
         if query_button:
             result = get_point_parameters(lon, lat, element, depth_suffix, data_info)
@@ -362,49 +369,45 @@ with col_left:
             else:
                 st.session_state['query_result'] = None
         
-        # 生成地图图像
-        with st.spinner('正在生成地图...'):
-            img_buf = create_map_image(display_data, vmin, vmax, element, depth, norm_method, marker_point)
+        # Generate map image - pass data_info for optimized display
+        with st.spinner('Generating map...'):
+            img_buf = create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point)
             
-        # 显示图像 - 修复弃用参数
-        st.image(img_buf, use_container_width=True)  # 修复：use_column_width -> use_container_width
+        # Display image
+        st.image(img_buf, use_container_width=True)
         
     except Exception as e:
-        st.error(f"地图生成错误: {str(e)}")
+        st.error(f"Map generation error: {str(e)}")
 
 with col_right:
-    st.subheader("📍 查询结果")
+    st.subheader("📍 Query Results")
     
-    # 检查是否有查询结果
+    # Check if there are query results
     if 'query_result' in st.session_state and st.session_state['query_result'] is not None:
         params = st.session_state['query_result']
         
-        st.success("✅ 查询成功")
+        st.success("✅ Query Successful")
         
-        # 位置信息
-        info_container = st.container()
-        with info_container:
-            st.markdown(f"""
-            **📍 位置信息**
-            - 经度: {lon:.4f}°E
-            - 纬度: {lat:.4f}°N
-            - 元素: {element}
-            - 深度: {depth}
-            """)
+        # Location information
+        st.markdown("**📍 Location Information**")
+        st.write(f"- Longitude: {lon:.4f}°E")
+        st.write(f"- Latitude: {lat:.4f}°N")
+        st.write(f"- Element: {element}")
+        st.write(f"- Depth: {depth}")
         
         st.markdown("---")
         
-        # 参数表格
-        st.markdown("**📊 土壤参数**")
+        # Parameter table
+        st.markdown("**📊 Soil Parameters**")
         
         param_display = []
         param_info = {
-            "Kd": ("L/g", "分配系数"),
-            "pH": ("", "土壤酸碱度"),
-            "SOM": ("g/kg", "有机质含量"),
-            "CEC": ("cmol⁺/kg", "阳离子交换容量"),
-            "IS": ("mol/L", "离子强度"),
-            "Ce": ("mg/kg", "平衡浓度")
+            "Kd": ("L/g", "Distribution Coefficient"),
+            "pH": ("", "Soil Acidity/Alkalinity"),
+            "SOM": ("g/kg", "Organic Matter Content"),
+            "CEC": ("cmol⁺/kg", "Cation Exchange Capacity"),
+            "IS": ("mol/L", "Ionic Strength"),
+            "Ce": ("mg/kg", "Equilibrium Concentration")
         }
         
         for param_name in ["Kd", "pH", "SOM", "CEC", "IS", "Ce"]:
@@ -413,44 +416,44 @@ with col_right:
                 unit, desc = param_info[param_name]
                 value_str = f"{value:.2f}" if value >= 1 else f"{value:.4f}"
                 param_display.append({
-                    "参数": param_name,
-                    "值": value_str,
-                    "单位": unit
+                    "Parameter": param_name,
+                    "Value": value_str,
+                    "Unit": unit
                 })
         
         df = pd.DataFrame(param_display)
-        st.dataframe(df, hide_index=True, use_container_width=True)  # 修复：use_column_width -> use_container_width
+        st.dataframe(df, hide_index=True, use_container_width=True)
         
-        # 参数说明
-        with st.expander("📖 参数说明"):
+        # Parameter description
+        with st.expander("📖 Parameter Description"):
             st.markdown("""
-            - **Kd**: 分配系数，表示元素在固液两相间的分配
-            - **pH**: 土壤酸碱度
-            - **SOM**: 土壤有机质含量
-            - **CEC**: 阳离子交换容量
-            - **IS**: 离子强度
-            - **Ce**: 平衡浓度
+            - **Kd**: Distribution coefficient, represents element distribution between solid and liquid phases
+            - **pH**: Soil acidity/alkalinity
+            - **SOM**: Soil organic matter content
+            - **CEC**: Cation exchange capacity
+            - **IS**: Ionic strength
+            - **Ce**: Equilibrium concentration
             """)
     else:
         if query_button:
-            st.warning("⚠️ 该位置无有效数据或超出范围")
+            st.warning("⚠️ No valid data at this location or out of range")
         else:
-            st.info("👆 请输入经纬度并点击查询按钮")
+            st.info("👆 Enter coordinates and click query button")
         
-        # 显示空表格
-        st.markdown("**📊 土壤参数**")
+        # Show empty table
+        st.markdown("**📊 Soil Parameters**")
         empty_df = pd.DataFrame({
-            "参数": ["Kd", "pH", "SOM", "CEC", "IS", "Ce"],
-            "值": ["--"] * 6,
-            "单位": ["L/g", "", "g/kg", "cmol⁺/kg", "mol/L", "mg/kg"]
+            "Parameter": ["Kd", "pH", "SOM", "CEC", "IS", "Ce"],
+            "Value": ["--"] * 6,
+            "Unit": ["L/g", "", "g/kg", "cmol⁺/kg", "mol/L", "mg/kg"]
         })
-        st.dataframe(empty_df, hide_index=True, use_container_width=True)  # 修复：use_column_width -> use_container_width
+        st.dataframe(empty_df, hide_index=True, use_container_width=True)
 
-# 页脚
+# Footer
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: gray; font-size: 12px;'>
-    🌱 稀土元素土壤Kd值可视化系统 v1.0<br>
-    数据基于Albers等积圆锥投影 | 支持15种稀土元素分析
+    🌱 REE Soil Kd Visualization System v2.0 | English Interface<br>
+    Data based on Albers Equal Area Conic Projection | Supports 15 rare earth elements
 </div>
 """, unsafe_allow_html=True)
