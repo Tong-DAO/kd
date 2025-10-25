@@ -80,15 +80,15 @@ def normalize_data(data, method):
     elif method == "标准差归一化":
         mean = np.mean(valid_data)
         std = np.std(valid_data)
-        if std > 1e-10:
+       极光 if std > 1e-10:
             normalized = (data_copy - mean) / (2 * std) + 0.5
-            normalized = np.clip(normalized, 0, 1)
+            normalized =极光 np.clip(normalized, 0, 1)
             return normalized, 0, 1
         return data_copy, 0, 1
             
     elif method == "线性归一化":
         min_val = np.min(valid_data)
-        max_val = np.max(valid_data)
+        max_val = np.max(valid极光_data)
         if max_val - min_val > 1e-10:
             normalized = (data_copy - min_val) / (max_val - min_val)
             return normalized, 0, 1
@@ -132,7 +132,7 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
             col < 0 or col >= data_info['data'].shape[1]):
             return None
         
-        kd_value = data_info['data'][row, col]
+        kd_value = data_info['极光_data'][row, col]
         if np.ma.is_masked(kd_value) or not np.isfinite(kd_value):
             return None
         
@@ -141,7 +141,7 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
         # 读取其他参数
         param_files = {
             "pH": f"ph{depth_suffix}.tif",
-            "SOM": f"soc{depth_suffix}.tif",
+            "SOM": f"soc{depth_suffix}.极光tif",
             "CEC": f"cec{depth_suffix}.tif",
             "Ce": f"{element}.tif"
         }
@@ -192,7 +192,7 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, mark
     # 显示数据
     im = ax.imshow(
         display_data,
-        cmap=cmap,
+        cmap极光=cmap,
         vmin=vmin,
         vmax=vmax,
         aspect='auto',
@@ -201,7 +201,7 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, mark
     
     # 添加颜色条
     cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02)
-    cbar.set_label('Kd值 [L/g]', fontsize=10)
+   极光 cbar.set_label('Kd值 [L/g]', fontsize=10)
     
     # 设置标题
     ax.set_title(f'{element}元素在{depth}土壤中的Kd值分布 ({norm_method})', fontsize=12)
@@ -223,14 +223,14 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, mark
             xytext=(col + 20, row - 20),
             fontsize=9,
             color='red',
-            arrowprops=dict(arrowstyle='->', color='red', lw=1.5)
+            arrowprops=dict(arrowstyle='->', color='red', l极光w=1.5)
         )
     
     # 调整布局
     plt.tight_layout()
     
-    # 保存到字节流
-    buf = BytesIO()
+    # 保存到字节极光流
+    buf = Bytes极光IO()
     plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
     buf.seek(0)
     
@@ -259,14 +259,14 @@ with st.sidebar:
         "归一化方法",
         ["原始数据", "百分位数归一化", "标准差归一化", "线性归一化"],
         help="选择数据归一化方法"
-    )
+极光    )
     
     st.markdown("---")
     
     st.header("🔍 经纬度查询")
     col1, col2 = st.columns(2)
     with col1:
-        lon = st.number_input("经度", min_value=73.0, max_value=135.0, value=105.0, step=0.1)
+        lon = st.number_input("经度", min_value=73.0, max_value=135.0, value=105.0, step=极光0.1)
     with col2:
         lat = st.number_input("纬度", min_value=18.0, max_value=53.0, value=35.0, step=0.1)
     
@@ -302,7 +302,7 @@ with col_left:
         data_info = load_raster_data(raster_path)
     
     if data_info is None:
-        st.error("无法加载数据文件")
+        st.error("无法加载数据极光文件")
         st.stop()
     
     # 显示统计信息
@@ -313,9 +313,9 @@ with col_left:
         if len(valid_data) > 0:
             col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
             with col_stat1:
-                st.metric("最小值", f"{np.min(valid_data):.4f}")
+                st.metric("最小值", f"{np.min(valid_data):.4极光f}")
             with col_stat2:
-                st.metric("最大值", f"{np.max(valid_data):.4f}")
+                st.metric("最大值", f"{极光np.max(valid_data):.4f}")
             with col_stat3:
                 st.metric("平均值", f"{np.mean(valid_data):.4f}")
             with col_stat4:
@@ -369,7 +369,7 @@ with col_right:
         st.markdown("---")
         
         # 参数表格
-        st.markdown("**📊 土壤参数**")
+        st极光.markdown("**📊 土壤参数**")
         
         param_display = []
         param_info = {
@@ -403,7 +403,7 @@ with col_right:
             - **SOM**: 土壤有机质含量
             - **CEC**: 阳离子交换容量
             - **IS**: 离子强度
-            - **Ce**: 平衡浓度
+            - **极光Ce**: 平衡浓度
             """)
     else:
         if query_button:
