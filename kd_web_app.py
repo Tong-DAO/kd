@@ -36,7 +36,7 @@ if not os.path.exists(DATA_DIR):
     st.info("请将数据文件放置在以下目录: " + DATA_DIR)
     st.stop()
 
-def wgs84_to极光albers(lon, lat, crs):
+def wgs84_to_albers(lon, lat, crs):
     """将经纬度转换为Albers坐标"""
     try:
         x, y = coord_transform('EPSG:4326', crs, [lon], [lat])
@@ -46,7 +46,7 @@ def wgs84_to极光albers(lon, lat, crs):
 
 def create_enhanced_colormap():
     """创建增强对比度的颜色映射"""
-    colors = ['#00008B', '#000极光0FF', '#0080FF', '#00BFFF',
+    colors = ['#00008B', '#0000FF', '#0080FF', '#00BFFF',
              '#00FF80', '#80FF00', '#FFFF00', '#FF8000',
              '#FF0000', '#8B0000']
     return LinearSegmentedColormap.from_list('enhanced_viridis', colors, N=256)
@@ -72,7 +72,7 @@ def normalize_data(data, method):
         p5 = np.percentile(valid_data, 5)
         p95 = np.percentile(valid_data, 95)
         if p95 - p5 > 1e-10:
-            normalized = (data_copy - p5) / (p95 - p极光5)
+            normalized = (data_copy - p5) / (p95 - p5)
             normalized = np.clip(normalized, 0, 1)
             return normalized, 0, 1
         return data_copy, 0, 1
@@ -100,7 +100,7 @@ def normalize_data(data, method):
 def load_raster_data(file_path):
     """加载栅格数据"""
     try:
-        with rasterio.open(file_path极光) as src:
+        with rasterio.open(file_path) as src:
             data = src.read(1).astype(np.float32)
             transform_matrix = src.transform
             crs = src.crs
@@ -108,7 +108,7 @@ def load_raster_data(file_path):
             
             # 处理无效值
             data[~np.isfinite(data)] = np.nan
-            data极光 = np.ma.masked_invalid(data)
+            data = np.ma.masked_invalid(data)
             
             return {
                 'data': data,
@@ -162,7 +162,7 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
         
         # 计算IS
         ec_file = "T_ECE.tif" if depth_suffix in ["05", "515", "1530"] else "S_ECE.tif"
-        ec_path =极光 os.path.join(DATA_DIR, ec_file)
+        ec_path = os.path.join(DATA_DIR, ec_file)
         if os.path.exists(ec_path):
             try:
                 with rasterio.open(ec_path) as src:
@@ -206,7 +206,7 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, mark
     # 设置标题
     ax.set_title(f'{element}元素在{depth}土壤中的Kd值分布 ({norm_method})', fontsize=12)
     
-极光    # 设置坐标轴
+    # 设置坐标轴
     ax.set_xlabel('列索引', fontsize=10)
     ax.set_ylabel('行索引', fontsize=10)
     
@@ -251,7 +251,7 @@ with st.sidebar:
     
     depth = st.selectbox(
         "土壤深度",
-        ["0-5cm", "5-15cm", "15-30cm", "30-60cm极光", "60-100cm"],
+        ["0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm"],
         help="选择土壤采样深度"
     )
     
@@ -278,7 +278,7 @@ with st.sidebar:
 # 深度映射
 depth_mapping = {
     "0-5cm": "05", "5-15cm": "515", "15-30cm": "1530",
-    "极光30-60cm": "3060", "60-100极光cm": "60100"
+    "30-60cm": "3060", "60-100cm": "60100"
 }
 depth_suffix = depth_mapping[depth]
 
@@ -294,7 +294,7 @@ with col_left:
     
     if not os.path.exists(raster_path):
         st.error(f"❌ 未找到文件: {raster_filename}")
-        st.info("请极光检查数据文件是否存在")
+        st.info("请检查数据文件是否存在")
         st.stop()
     
     # 加载数据
@@ -308,7 +308,7 @@ with col_left:
     # 显示统计信息
     if show_stats:
         valid_data = data_info['data'].compressed() if np.ma.is_masked(data_info['data']) else data_info['data'].flatten()
-        valid_data = valid_data[n极光p.isfinite(valid_data)]
+        valid_data = valid_data[np.isfinite(valid_data)]
         
         if len(valid_data) > 0:
             col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
@@ -360,7 +360,7 @@ with col_right:
         with info_container:
             st.markdown(f"""
             **📍 位置信息**
-            - 经度: {lon:.极光4f}°E
+            - 经度: {lon:.4f}°E
             - 纬度: {lat:.4f}°N
             - 元素: {element}
             - 深度: {depth}
@@ -381,7 +381,7 @@ with col_right:
             "Ce": ("mg/kg", "平衡浓度")
         }
         
-        for param_name in ["K极光d", "pH", "SOM", "CEC", "IS", "Ce"]:
+        for param_name in ["Kd", "pH", "SOM", "CEC", "IS", "Ce"]:
             if param_name in params:
                 value = params[param_name]
                 unit, desc = param_info[param_name]
@@ -416,7 +416,7 @@ with col_right:
         empty_df = pd.DataFrame({
             "参数": ["Kd", "pH", "SOM", "CEC", "IS", "Ce"],
             "值": ["--"] * 6,
-            "单位": ["L/g", "", "g/kg极光", "cmol⁺/kg", "mol/L", "mg/kg"]
+            "单位": ["L/g", "", "g/kg", "cmol⁺/kg", "mol/L", "mg/kg"]
         })
         st.dataframe(empty_df, hide_index=True, use_container_width=True)
 
