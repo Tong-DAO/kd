@@ -57,12 +57,9 @@ def wgs84_to_albers(lon, lat, crs):
         x, y = coord_transform('EPSG:4326', crs, [lon], [lat]); return x[0], y[0]
     except: return None, None
 
-# >>>>> 【v1.05 修正点 1】: 反转色带 <<<<<
-def create_enhanced_colormap(reverse=False):
-    """Create enhanced contrast colormap. Can be reversed."""
+# >>>>> 【v1.07 修正点 1】: 简化 colormap 函数，移除反转逻辑 <<<<<
+def create_enhanced_colormap():
     colors = ['#00008B', '#0000FF', '#0080FF', '#00BFFF', '#00FF80', '#80FF00', '#FFFF00', '#FF8000', '#FF0000', '#8B0000']
-    if reverse:
-        colors = colors[::-1] # 反转颜色列表
     return LinearSegmentedColormap.from_list('enhanced_viridis', colors, N=256)
 
 def normalize_data(data, method):
@@ -109,12 +106,12 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
         return params, (row, col)
     except: return None, None
 
-def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point=None, reverse_colormap=False):
+# >>>>> 【v1.07 修正点 2】: 简化 create_map_image 函数，移除 reverse_colormap 参数 <<<<<
+def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point=None):
     try:
         fig = plt.figure(figsize=(12, 8), dpi=100)
         ax = fig.add_subplot(111)
-        # 使用反转选项
-        cmap = create_enhanced_colormap(reverse=reverse_colormap) if norm_method != "Raw Data" else 'viridis'
+        cmap = create_enhanced_colormap() if norm_method != "Raw Data" else 'viridis'
         bounds = data_info['bounds']; width, height = bounds.right - bounds.left, bounds.top - bounds.bottom
         margin_x, margin_y = width * 0.05, height * 0.05
         extent = [bounds.left - margin_x, bounds.right + margin_x, bounds.bottom - margin_y, bounds.top + margin_y]
@@ -131,9 +128,8 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data
     except Exception as e:
         st.error(f"Error creating map image: {e}"); return None
 
-# >>>>> 【v1.05 修正点 2】: 采用官方推荐方案，解决 UnhashableParamError <<<<<
 @st.cache_data
-def get_depth_profile_data(lon, lat, element, _base_data_info): # 在 'base_data_info' 前加上下划线
+def get_depth_profile_data(lon, lat, element, _base_data_info):
     depths = {"0-5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
     profile_data = {}
     try:
@@ -166,13 +162,14 @@ with st.sidebar:
     depth = st.selectbox("Soil Depth", ["0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm"], help="Select a soil sampling depth")
     norm_method = st.selectbox("Normalization Method", ["Raw Data", "Percentile Normalization", "Standard Deviation Normalization", "Linear Normalization"], help="Select a data normalization method")
     
-    st.markdown("---"); st.header("🎨 Display Options")
-    reverse_colormap = st.toggle("Reverse Colormap (High Value = Dark)", value=True) # 添加反转色带的开关
+    # >>>>> 【v1.07 修正点 3】: 移除 Display Options 部分 <<<<<
+    # st.markdown("---"); st.header("🎨 Display Options")
+    # reverse_colormap = st.toggle("Reverse Colormap (High Value = Dark)", value=True)
     
     st.markdown("---"); st.header("🔍 Coordinate Query")
     lon = st.number_input("Longitude", min_value=73.0, max_value=135.0, value=105.0, step=0.1)
     lat = st.number_input("Latitude", min_value=18.0, max_value=53.0, value=35.0, step=0.1)
-    query_button = st.button("🎯 Query Point", use_container_width=True, type="primary") # 保持 use_container_width
+    query_button = st.button("🎯 Query Point", use_container_width=True, type="primary")
     
     st.markdown("---"); show_stats = st.checkbox("Show Statistics", value=False)
 
@@ -199,7 +196,8 @@ with col_left:
     
     with st.spinner('Generating map...'):
         display_data, vmin, vmax = normalize_data(data_info['data'], norm_method)
-        img_buf = create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point_to_display, reverse_colormap=reverse_colormap)
+        # >>>>> 【v1.07 修正点 4】: 调用简化的 create_map_image 函数 <<<<<
+        img_buf = create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point_to_display)
     if img_buf: st.image(img_buf, use_container_width=True)
     else: st.error("Failed to generate map image.")
 
@@ -232,7 +230,7 @@ with col_right:
         st.info("Click the button below to analyze the Kd value variation with depth at the queried location.")
         if 'query_result' in st.session_state and st.session_state['query_result'] is not None:
             if st.button("Generate Depth Profile", use_container_width=True, type="primary"):
-                with st.spinner("Generating depth profile..."): # 添加 Spinner
+                with st.spinner("Generating depth profile..."):
                     profile_data = get_depth_profile_data(lon, lat, element, data_info)
                     if profile_data:
                         profile_chart = create_depth_profile_chart(profile_data, element)
@@ -242,6 +240,6 @@ with col_right:
         else:
             st.warning("Please query a point first in the 'Query Results' tab.")
 
-# --- v1.05 Footer ---
+# --- v1.07 Footer ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.05<br>Stable version with Depth Profile and Data Download</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.07<br>Stable version with Depth Profile and Data Download</div>", unsafe_allow_html=True)
