@@ -13,7 +13,7 @@ from huggingface_hub import hf_hub_download
 
 warnings.filterwarnings('ignore')
 
-# --- v1.0 (Core Configuration) ---
+# --- Core Configuration ---
 HF_REPO_ID = "Tong-DAO/REES"
 HF_REPO_TYPE = "dataset"
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
@@ -28,7 +28,7 @@ st.set_page_config(
 
 st.title("🌱 REEs Soil Kd Value Visualization System")
 
-# --- v1.0 (Core Data Loading Functions) ---
+# --- Core Data Loading Functions ---
 @st.cache_resource(show_spinner="Syncing data files from the cloud...")
 def get_hf_file_path(filename_in_repo):
     try:
@@ -51,14 +51,18 @@ def load_raster_data(filename_in_repo):
     except Exception as e:
         st.error(f"Error loading raster file '{local_file_path}': {e}"); return None
 
-# --- v1.0 (Core Utility and Processing Functions) ---
+# --- Core Utility and Processing Functions ---
 def wgs84_to_albers(lon, lat, crs):
     try:
         x, y = coord_transform('EPSG:4326', crs, [lon], [lat]); return x[0], y[0]
     except: return None, None
 
-def create_enhanced_colormap():
+# >>>>> 【v1.05 修正点 1】: 反转色带 <<<<<
+def create_enhanced_colormap(reverse=False):
+    """Create enhanced contrast colormap. Can be reversed."""
     colors = ['#00008B', '#0000FF', '#0080FF', '#00BFFF', '#00FF80', '#80FF00', '#FFFF00', '#FF8000', '#FF0000', '#8B0000']
+    if reverse:
+        colors = colors[::-1] # 反转颜色列表
     return LinearSegmentedColormap.from_list('enhanced_viridis', colors, N=256)
 
 def normalize_data(data, method):
@@ -105,10 +109,12 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
         return params, (row, col)
     except: return None, None
 
-def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point=None):
+def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point=None, reverse_colormap=False):
     try:
         fig = plt.figure(figsize=(12, 8), dpi=100)
-        ax = fig.add_subplot(111); cmap = create_enhanced_colormap() if norm_method != "Raw Data" else 'viridis'
+        ax = fig.add_subplot(111)
+        # 使用反转选项
+        cmap = create_enhanced_colormap(reverse=reverse_colormap) if norm_method != "Raw Data" else 'viridis'
         bounds = data_info['bounds']; width, height = bounds.right - bounds.left, bounds.top - bounds.bottom
         margin_x, margin_y = width * 0.05, height * 0.05
         extent = [bounds.left - margin_x, bounds.right + margin_x, bounds.bottom - margin_y, bounds.top + margin_y]
@@ -125,52 +131,52 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data
     except Exception as e:
         st.error(f"Error creating map image: {e}"); return None
 
-# >>>>> 【v1.04 修正点 1】: 解决了 UnhashableParamError <<<<<
-# 移除了 @st.cache_data 装饰器，因为该函数执行很快，且其内部调用的 load_raster_data 已经被缓存了。
-# 这样可以避免因传入复杂的 data_info 对象而导致的哈希错误。
-def get_depth_profile_data(lon, lat, element, base_data_info):
+# >>>>> 【v1.05 修正点 2】: 采用官方推荐方案，解决 UnhashableParamError <<<<<
+@st.cache_data
+def get_depth_profile_data(lon, lat, element, _base_data_info): # 在 'base_data_info' 前加上下划线
     depths = {"0-5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
     profile_data = {}
     try:
-        x, y = wgs84_to_albers(lon, lat, base_data_info['crs'])
+        x, y = wgs84_to_albers(lon, lat, _base_data_info['crs'])
         if x is None: return None
-        row, col = rasterio.transform.rowcol(base_data_info['transform'], x, y)
-        if not (0 <= row < base_data_info['data'].shape[0] and 0 <= col < base_data_info['data'].shape[1]): return None
+        row, col = rasterio.transform.rowcol(_base_data_info['transform'], x, y)
+        if not (0 <= row < _base_data_info['data'].shape[0] and 0 <= col < _base_data_info['data'].shape[1]): return None
 
-        with st.spinner("Generating depth profile..."): # 在函数内部添加 spinner
-            for depth_label, depth_suffix in depths.items():
-                raster_file = f"prediction_result_{element}{depth_suffix}_raw.tif"
-                data_info = load_raster_data(raster_file) # 这个函数被缓存了，所以速度很快
-                kd_value = data_info['data'][row, col]
-                if not (np.ma.is_masked(kd_value) or not np.isfinite(kd_value)):
-                    profile_data[depth_label] = float(kd_value)
+        for depth_label, depth_suffix in depths.items():
+            raster_file = f"prediction_result_{element}{depth_suffix}_raw.tif"
+            data_info = load_raster_data(raster_file)
+            kd_value = data_info['data'][row, col]
+            if not (np.ma.is_masked(kd_value) or not np.isfinite(kd_value)):
+                profile_data[depth_label] = float(kd_value)
         return profile_data
-    except Exception as e:
-        st.error(f"Error generating depth profile: {e}")
-        return None
+    except: return None
 
 def create_depth_profile_chart(profile_data, element):
     if not profile_data: return None
     df = pd.DataFrame(list(profile_data.items()), columns=['Depth', 'Kd Value'])
     fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
-    ax.plot(df['Depth'], df['Kd Value'], marker='o', linestyle='-')
-    ax.set_xlabel('Soil Depth'); ax.set_ylabel('Kd Value [L/g]')
+    ax.plot(df['Depth'], df['Kd Value'], marker='o', linestyle='-'); ax.set_xlabel('Soil Depth'); ax.set_ylabel('Kd Value [L/g]')
     ax.set_title(f'Kd Value Depth Profile for {element}'); ax.grid(True, alpha=0.3); plt.tight_layout()
     return fig
 
-# --- v1.0 (Core UI Sidebar) ---
+# --- UI Sidebar ---
 with st.sidebar:
     st.header("📊 Parameter Settings")
     element = st.selectbox("Rare Earth Element", ["La", "Ce", "Pr", "Nd", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Y"], help="Select a rare earth element to display")
     depth = st.selectbox("Soil Depth", ["0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm"], help="Select a soil sampling depth")
     norm_method = st.selectbox("Normalization Method", ["Raw Data", "Percentile Normalization", "Standard Deviation Normalization", "Linear Normalization"], help="Select a data normalization method")
+    
+    st.markdown("---"); st.header("🎨 Display Options")
+    reverse_colormap = st.toggle("Reverse Colormap (High Value = Dark)", value=True) # 添加反转色带的开关
+    
     st.markdown("---"); st.header("🔍 Coordinate Query")
     lon = st.number_input("Longitude", min_value=73.0, max_value=135.0, value=105.0, step=0.1)
     lat = st.number_input("Latitude", min_value=18.0, max_value=53.0, value=35.0, step=0.1)
-    query_button = st.button("🎯 Query Point", use_container_width=True, type="primary")
+    query_button = st.button("🎯 Query Point", use_container_width=True, type="primary") # 保持 use_container_width
+    
     st.markdown("---"); show_stats = st.checkbox("Show Statistics", value=False)
 
-# --- v1.0 (Core Main Logic) ---
+# --- Main Logic ---
 depth_mapping = {"0-5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
 depth_suffix = depth_mapping[depth]; raster_filename = f"prediction_result_{element}{depth_suffix}_raw.tif"
 col_left, col_right = st.columns([2, 1])
@@ -193,7 +199,7 @@ with col_left:
     
     with st.spinner('Generating map...'):
         display_data, vmin, vmax = normalize_data(data_info['data'], norm_method)
-        img_buf = create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point_to_display)
+        img_buf = create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point_to_display, reverse_colormap=reverse_colormap)
     if img_buf: st.image(img_buf, use_container_width=True)
     else: st.error("Failed to generate map image.")
 
@@ -226,17 +232,16 @@ with col_right:
         st.info("Click the button below to analyze the Kd value variation with depth at the queried location.")
         if 'query_result' in st.session_state and st.session_state['query_result'] is not None:
             if st.button("Generate Depth Profile", use_container_width=True, type="primary"):
-                # >>>>> 【v1.04 修正点 2】: 调用修正后的函数 <<<<<
-                # 现在我们只传入必需的、可哈希的参数，以及 base_data_info 用于坐标转换
-                profile_data = get_depth_profile_data(lon, lat, element, data_info)
-                if profile_data:
-                    profile_chart = create_depth_profile_chart(profile_data, element)
-                    st.pyplot(profile_chart)
-                else:
-                    st.error("Could not generate profile. Data might be missing for some depths at this location.")
+                with st.spinner("Generating depth profile..."): # 添加 Spinner
+                    profile_data = get_depth_profile_data(lon, lat, element, data_info)
+                    if profile_data:
+                        profile_chart = create_depth_profile_chart(profile_data, element)
+                        st.pyplot(profile_chart)
+                    else:
+                        st.error("Could not generate profile. Data might be missing for some depths at this location.")
         else:
             st.warning("Please query a point first in the 'Query Results' tab.")
 
-# --- v1.04 Footer ---
+# --- v1.05 Footer ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.04<br>Stable version with Depth Profile and Data Download</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.05<br>Stable version with Depth Profile and Data Download</div>", unsafe_allow_html=True)
