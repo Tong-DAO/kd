@@ -38,10 +38,7 @@ def get_hf_file_path(filename_in_repo):
     except Exception as e:
         st.error(f"Failed to download file '{filename_in_repo}': {e}"); st.stop()
 
-# >>>>> 【v1.08 修正点 1】: 为缓存函数增加 ttl (time-to-live) 和 max_entries <<<<<
-# 这会告诉 Streamlit，缓存最多只保留10个条目，并且每小时清空一次。
-# 这是一种保险措施，防止缓存无限增长导致内存问题。
-@st.cache_data(ttl=3600, max_entries=10)
+@st.cache_data(ttl=3600, max_entries=20) # 稍微增加缓存条目，以容纳更多辅助文件
 def load_raster_data(filename_in_repo):
     local_file_path = get_hf_file_path(filename_in_repo)
     try:
@@ -129,37 +126,26 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data
     except Exception as e:
         st.error(f"Error creating map image: {e}"); return None
 
-# >>>>> 【v1.08 修正点 2】: 重构深度剖面函数，优化内存使用 <<<<<
+# 使用官方推荐的 `_` 前缀方法解决缓存问题
 @st.cache_data
-def get_depth_profile_data(lon, lat, element, crs_string, transform_tuple, shape_tuple):
-    """
-    高效获取深度剖面数据，避免在内存中保留完整的栅格对象。
-    此函数现在只接收可哈希的参数。
-    """
+def get_depth_profile_data(lon, lat, element, _base_data_info):
     depths = {"0-5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
     profile_data = {}
     try:
-        # 将传入的元组和字符串转换回所需的对象
-        transform = rasterio.Affine.from_gdal(*transform_tuple)
-        crs = rasterio.crs.CRS.from_string(crs_string)
-        shape = shape_tuple
-        
-        x, y = wgs84_to_albers(lon, lat, crs)
+        x, y = wgs84_to_albers(lon, lat, _base_data_info['crs'])
         if x is None: return None
-        row, col = rasterio.transform.rowcol(transform, x, y)
-        if not (0 <= row < shape[0] and 0 <= col < shape[1]): return None
+        row, col = rasterio.transform.rowcol(_base_data_info['transform'], x, y)
+        if not (0 <= row < _base_data_info['data'].shape[0] and 0 <= col < _base_data_info['data'].shape[1]): return None
 
         for depth_label, depth_suffix in depths.items():
             raster_file = f"prediction_result_{element}{depth_suffix}_raw.tif"
-            # 这里是关键：我们只加载数据，用完就释放，不会全部堆积在缓存里
-            data_info = load_raster_data(raster_file)
-            kd_value = data_info['data'][row, col]
-            if not (np.ma.is_masked(kd_value) or not np.isfinite(kd_value)):
-                profile_data[depth_label] = float(kd_value)
+            data_info_loop = load_raster_data(raster_file)
+            if data_info_loop is not None:
+                kd_value = data_info_loop['data'][row, col]
+                if not (np.ma.is_masked(kd_value) or not np.isfinite(kd_value)):
+                    profile_data[depth_label] = float(kd_value)
         return profile_data
-    except Exception as e:
-        st.error(f"Error in get_depth_profile_data: {e}")
-        return None
+    except: return None
 
 def create_depth_profile_chart(profile_data, element):
     if not profile_data: return None
@@ -196,9 +182,17 @@ with col_left:
         if len(valid_data) > 0:
             stats_cols = st.columns(4); stats_cols[0].metric("Min", f"{np.min(valid_data):.4f}"); stats_cols[1].metric("Max", f"{np.max(valid_data):.4f}"); stats_cols[2].metric("Mean", f"{np.mean(valid_data):.4f}"); stats_cols[3].metric("Median", f"{np.median(valid_data):.4f}")
     
+    # >>>>> 【v1.09 核心修正】: 主动管理 session_state <<<<<
     if query_button:
+        # 每次点击查询按钮，都先清空上一次的结果，确保状态干净
+        st.session_state['query_result'] = None
+        st.session_state['marker_point'] = None
+        
         result, marker = get_point_parameters(lon, lat, element, depth_suffix, data_info)
-        st.session_state['query_result'] = result; st.session_state['marker_point'] = marker
+        # 只有在查询成功时，才更新 session_state
+        if result:
+            st.session_state['query_result'] = result
+            st.session_state['marker_point'] = marker
     
     marker_point_to_display = st.session_state.get('marker_point', None)
     
@@ -212,6 +206,7 @@ with col_right:
     tab1, tab2 = st.tabs(["📍 Query Results", "📈 Depth Profile Analysis"])
 
     with tab1:
+        # 这里的逻辑现在非常安全，因为它总是读取最新的、干净的状态
         if 'query_result' in st.session_state and st.session_state['query_result'] is not None:
             params = st.session_state['query_result']; st.success("✅ Query Successful")
             st.markdown(f"**📍 Location Information**\n- Longitude: {lon:.4f}°E\n- Latitude: {lat:.4f}°N\n- Element: {element}\n- Depth: {depth}")
@@ -226,6 +221,7 @@ with col_right:
             with st.expander("📖 Parameter Description"):
                 st.markdown("- **Kd**: Distribution coefficient\n- **pH**: Soil acidity/alkalinity\n- **SOM**: Soil organic matter\n- **CEC**: Cation exchange capacity\n- **IS**: Ionic strength\n- **Ce**: Equilibrium concentration")
         else:
+            # 只有在按钮被点击过，但结果为空时，才显示警告
             if query_button: st.warning("⚠️ No valid data at this location or out of range.")
             else: st.info("👆 Enter coordinates and click 'Query Point'.")
             st.markdown("**📊 Soil Parameters**")
@@ -238,13 +234,8 @@ with col_right:
         if 'query_result' in st.session_state and st.session_state['query_result'] is not None:
             if st.button("Generate Depth Profile", use_container_width=True, type="primary"):
                 with st.spinner("Generating depth profile..."):
-                    # >>>>> 【v1.08 修正点 3】: 将复杂的 data_info 对象拆解成可哈希的元组和字符串 <<<<<
-                    transform_tuple = data_info['transform'].to_gdal()
-                    crs_string = data_info['crs'].to_string()
-                    shape_tuple = data_info['data'].shape
-
-                    profile_data = get_depth_profile_data(lon, lat, element, crs_string, transform_tuple, shape_tuple)
-                    
+                    # 这里的 data_info 始终是主循环中加载的那个，状态一致
+                    profile_data = get_depth_profile_data(lon, lat, element, data_info)
                     if profile_data:
                         profile_chart = create_depth_profile_chart(profile_data, element)
                         st.pyplot(profile_chart)
@@ -253,6 +244,6 @@ with col_right:
         else:
             st.warning("Please query a point first in the 'Query Results' tab.")
 
-# --- v1.08 Footer ---
+# --- v1.09 Footer ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.08<br>Memory-optimized stable version</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.09<br>Final Stable Version</div>", unsafe_allow_html=True)
