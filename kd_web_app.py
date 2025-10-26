@@ -38,7 +38,10 @@ def get_hf_file_path(filename_in_repo):
     except Exception as e:
         st.error(f"Failed to download file '{filename_in_repo}': {e}"); st.stop()
 
-@st.cache_data(show_spinner="Loading and parsing raster data...")
+# >>>>> 【v1.08 修正点 1】: 为缓存函数增加 ttl (time-to-live) 和 max_entries <<<<<
+# 这会告诉 Streamlit，缓存最多只保留10个条目，并且每小时清空一次。
+# 这是一种保险措施，防止缓存无限增长导致内存问题。
+@st.cache_data(ttl=3600, max_entries=10)
 def load_raster_data(filename_in_repo):
     local_file_path = get_hf_file_path(filename_in_repo)
     try:
@@ -57,7 +60,6 @@ def wgs84_to_albers(lon, lat, crs):
         x, y = coord_transform('EPSG:4326', crs, [lon], [lat]); return x[0], y[0]
     except: return None, None
 
-# >>>>> 【v1.07 修正点 1】: 简化 colormap 函数，移除反转逻辑 <<<<<
 def create_enhanced_colormap():
     colors = ['#00008B', '#0000FF', '#0080FF', '#00BFFF', '#00FF80', '#80FF00', '#FFFF00', '#FF8000', '#FF0000', '#8B0000']
     return LinearSegmentedColormap.from_list('enhanced_viridis', colors, N=256)
@@ -106,7 +108,6 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
         return params, (row, col)
     except: return None, None
 
-# >>>>> 【v1.07 修正点 2】: 简化 create_map_image 函数，移除 reverse_colormap 参数 <<<<<
 def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point=None):
     try:
         fig = plt.figure(figsize=(12, 8), dpi=100)
@@ -128,24 +129,37 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data
     except Exception as e:
         st.error(f"Error creating map image: {e}"); return None
 
+# >>>>> 【v1.08 修正点 2】: 重构深度剖面函数，优化内存使用 <<<<<
 @st.cache_data
-def get_depth_profile_data(lon, lat, element, _base_data_info):
+def get_depth_profile_data(lon, lat, element, crs_string, transform_tuple, shape_tuple):
+    """
+    高效获取深度剖面数据，避免在内存中保留完整的栅格对象。
+    此函数现在只接收可哈希的参数。
+    """
     depths = {"0-5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
     profile_data = {}
     try:
-        x, y = wgs84_to_albers(lon, lat, _base_data_info['crs'])
+        # 将传入的元组和字符串转换回所需的对象
+        transform = rasterio.Affine.from_gdal(*transform_tuple)
+        crs = rasterio.crs.CRS.from_string(crs_string)
+        shape = shape_tuple
+        
+        x, y = wgs84_to_albers(lon, lat, crs)
         if x is None: return None
-        row, col = rasterio.transform.rowcol(_base_data_info['transform'], x, y)
-        if not (0 <= row < _base_data_info['data'].shape[0] and 0 <= col < _base_data_info['data'].shape[1]): return None
+        row, col = rasterio.transform.rowcol(transform, x, y)
+        if not (0 <= row < shape[0] and 0 <= col < shape[1]): return None
 
         for depth_label, depth_suffix in depths.items():
             raster_file = f"prediction_result_{element}{depth_suffix}_raw.tif"
+            # 这里是关键：我们只加载数据，用完就释放，不会全部堆积在缓存里
             data_info = load_raster_data(raster_file)
             kd_value = data_info['data'][row, col]
             if not (np.ma.is_masked(kd_value) or not np.isfinite(kd_value)):
                 profile_data[depth_label] = float(kd_value)
         return profile_data
-    except: return None
+    except Exception as e:
+        st.error(f"Error in get_depth_profile_data: {e}")
+        return None
 
 def create_depth_profile_chart(profile_data, element):
     if not profile_data: return None
@@ -161,16 +175,10 @@ with st.sidebar:
     element = st.selectbox("Rare Earth Element", ["La", "Ce", "Pr", "Nd", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Y"], help="Select a rare earth element to display")
     depth = st.selectbox("Soil Depth", ["0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm"], help="Select a soil sampling depth")
     norm_method = st.selectbox("Normalization Method", ["Raw Data", "Percentile Normalization", "Standard Deviation Normalization", "Linear Normalization"], help="Select a data normalization method")
-    
-    # >>>>> 【v1.07 修正点 3】: 移除 Display Options 部分 <<<<<
-    # st.markdown("---"); st.header("🎨 Display Options")
-    # reverse_colormap = st.toggle("Reverse Colormap (High Value = Dark)", value=True)
-    
     st.markdown("---"); st.header("🔍 Coordinate Query")
     lon = st.number_input("Longitude", min_value=73.0, max_value=135.0, value=105.0, step=0.1)
     lat = st.number_input("Latitude", min_value=18.0, max_value=53.0, value=35.0, step=0.1)
     query_button = st.button("🎯 Query Point", use_container_width=True, type="primary")
-    
     st.markdown("---"); show_stats = st.checkbox("Show Statistics", value=False)
 
 # --- Main Logic ---
@@ -196,7 +204,6 @@ with col_left:
     
     with st.spinner('Generating map...'):
         display_data, vmin, vmax = normalize_data(data_info['data'], norm_method)
-        # >>>>> 【v1.07 修正点 4】: 调用简化的 create_map_image 函数 <<<<<
         img_buf = create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point_to_display)
     if img_buf: st.image(img_buf, use_container_width=True)
     else: st.error("Failed to generate map image.")
@@ -231,7 +238,13 @@ with col_right:
         if 'query_result' in st.session_state and st.session_state['query_result'] is not None:
             if st.button("Generate Depth Profile", use_container_width=True, type="primary"):
                 with st.spinner("Generating depth profile..."):
-                    profile_data = get_depth_profile_data(lon, lat, element, data_info)
+                    # >>>>> 【v1.08 修正点 3】: 将复杂的 data_info 对象拆解成可哈希的元组和字符串 <<<<<
+                    transform_tuple = data_info['transform'].to_gdal()
+                    crs_string = data_info['crs'].to_string()
+                    shape_tuple = data_info['data'].shape
+
+                    profile_data = get_depth_profile_data(lon, lat, element, crs_string, transform_tuple, shape_tuple)
+                    
                     if profile_data:
                         profile_chart = create_depth_profile_chart(profile_data, element)
                         st.pyplot(profile_chart)
@@ -240,6 +253,6 @@ with col_right:
         else:
             st.warning("Please query a point first in the 'Query Results' tab.")
 
-# --- v1.07 Footer ---
+# --- v1.08 Footer ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.07<br>Stable version with Depth Profile and Data Download</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.08<br>Memory-optimized stable version</div>", unsafe_allow_html=True)
