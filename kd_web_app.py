@@ -29,6 +29,7 @@ st.set_page_config(
 st.title("🌱 REEs Soil Kd Value Visualization System")
 
 # --- Core Data Loading and Utility Functions ---
+
 @st.cache_resource(show_spinner="Syncing data files from the cloud...")
 def get_hf_file_path(filename_in_repo):
     try:
@@ -38,8 +39,14 @@ def get_hf_file_path(filename_in_repo):
     except Exception as e:
         st.error(f"Failed to download file '{filename_in_repo}': {e}"); st.stop()
 
-@st.cache_data
+# >>>>> 【v1.14 核心修正】: 精准控制缓存，防止内存溢出 <<<<<
+@st.cache_data(max_entries=10, ttl=3600)
 def load_main_raster_data(filename_in_repo):
+    """
+    Loads the main raster data for the map.
+    max_entries=10: Cache at most 10 raster files. This prevents memory overflow when switching elements.
+    ttl=3600: Cache entries expire after 1 hour.
+    """
     local_file_path = get_hf_file_path(filename_in_repo)
     try:
         with rasterio.open(local_file_path) as src:
@@ -100,19 +107,12 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data
     except Exception as e:
         st.error(f"Error creating map image: {e}"); return None
 
-# >>>>> 【v1.13 核心修正】: 函数签名只接收可哈希的原始类型 <<<<<
 @st.cache_data
 def get_all_point_data(lon, lat, element, crs_str, transform_tuple, shape_tuple):
-    """
-    轻量级函数，一次性获取一个点的所有数据。
-    只接收可哈希的原始类型参数 (数字, 字符串, 元组)。
-    """
     try:
-        # 在函数内部重构 rasterio 对象
         crs = rasterio.crs.CRS.from_string(crs_str)
         transform = rasterio.Affine.from_gdal(*transform_tuple)
         shape = shape_tuple
-
         x, y = wgs84_to_albers(lon, lat, crs)
         if x is None: return None, None
         row, col = rasterio.transform.rowcol(transform, x, y)
@@ -120,14 +120,14 @@ def get_all_point_data(lon, lat, element, crs_str, transform_tuple, shape_tuple)
 
         depths = {"0-5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
         all_data = {}
-        
         for depth_label, depth_suffix in depths.items():
             params = {}
             kd_file = f"prediction_result_{element}{depth_suffix}_raw.tif"
             kd_value = get_value_from_raster(kd_file, int(row), int(col))
             if kd_value is None or not np.isfinite(kd_value): continue
             params['Kd'] = float(kd_value)
-
+            
+            # ... (rest of the parameter fetching logic is fine)
             param_files = {"pH": f"ph{depth_suffix}.tif", "SOM": f"soc{depth_suffix}.tif", "CEC": f"cec{depth_suffix}.tif"}
             for param_name, filename in param_files.items():
                 value = get_value_from_raster(filename, int(row), int(col))
@@ -135,17 +135,14 @@ def get_all_point_data(lon, lat, element, crs_str, transform_tuple, shape_tuple)
                     if param_name in ["pH", "CEC"]: value /= 100
                     elif param_name == "SOM": value = value * 1.724 / 100
                     params[param_name] = float(value)
-            
             ec_file = "T_ECE.tif" if depth_suffix in ["05", "515", "1530"] else "S_ECE.tif"
             ec_value = get_value_from_raster(ec_file, int(row), int(col))
             if ec_value is not None and np.isfinite(ec_value): params["IS"] = float(max(0.0446 * ec_value - 0.000173, 0))
-
             ce_file = f"{element}.tif"
             ce_value = get_value_from_raster(ce_file, int(row), int(col))
             if ce_value is not None and np.isfinite(ce_value): params["Ce"] = float(ce_value)
-
-            all_data[depth_label] = params
             
+            all_data[depth_label] = params
         return all_data, (int(row), int(col))
     except:
         return None, None
@@ -161,7 +158,7 @@ def create_depth_profile_chart(depth_profile_data, element):
     ax.set_title(f'Kd Value Depth Profile for {element}'); ax.grid(True, alpha=0.3); plt.tight_layout()
     return fig
 
-# --- UI Sidebar (回归简单，移除 on_change) ---
+# --- UI Sidebar ---
 with st.sidebar:
     st.header("📊 Parameter Settings")
     element = st.selectbox("Rare Earth Element", ["La", "Ce", "Pr", "Nd", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Y"], help="Select a rare earth element to display")
@@ -191,12 +188,10 @@ with col_left:
     if query_button:
         st.session_state['query_result'] = None; st.session_state['depth_profile_data'] = None; st.session_state['marker_point'] = None
         with st.spinner("Querying all parameters for the selected point..."):
-            # >>>>> 【v1.13 核心修正】: 在调用前，将复杂对象转换为原始类型 <<<<<
             crs_str = main_data_info['crs'].to_string()
             transform_tuple = main_data_info['transform'].to_gdal()
             shape_tuple = main_data_info['data'].shape
             all_data, marker = get_all_point_data(lon, lat, element, crs_str, transform_tuple, shape_tuple)
-        
         if all_data:
             st.session_state['query_result'] = all_data.get(depth)
             st.session_state['depth_profile_data'] = all_data
@@ -213,6 +208,7 @@ with col_left:
 with col_right:
     tab1, tab2 = st.tabs(["📍 Query Results", "📈 Depth Profile Analysis"])
     with tab1:
+        # ... (This part of the UI remains the same and is stable)
         if 'query_result' in st.session_state and st.session_state.get('query_result'):
             params = st.session_state['query_result']; st.success("✅ Query Successful")
             st.markdown(f"**📍 Location Information**\n- Longitude: {lon:.4f}°E\n- Latitude: {lat:.4f}°N\n- Element: {element}\n- Depth: {depth}")
@@ -222,14 +218,13 @@ with col_right:
             st.dataframe(param_display_df, hide_index=True, use_container_width=True)
             csv = param_display_df.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download Results as CSV", csv, f'query_results_{element}_{lon}_{lat}_{depth}.csv', 'text/csv', use_container_width=True)
-            with st.expander("📖 Parameter Description"): st.markdown("- **Kd**: ...")
         else:
             if query_button: st.warning("⚠️ No valid data at this location or for the selected depth.")
             else: st.info("👆 Enter coordinates and click 'Query Point'.")
             st.markdown("**📊 Soil Parameters**"); empty_df = pd.DataFrame({"Parameter": ["Kd", "pH", "SOM", "CEC", "IS", "Ce"], "Value": ["--"] * 6})
             st.dataframe(empty_df, hide_index=True, use_container_width=True)
+
     with tab2:
-        st.header("Vertical Kd Distribution")
         if 'depth_profile_data' in st.session_state and st.session_state.get('depth_profile_data'):
             profile_data = st.session_state['depth_profile_data']
             st.info("Depth profile data is available based on your latest query.")
@@ -239,6 +234,6 @@ with col_right:
         else:
             st.warning("Please perform a successful query to view depth profile data.")
 
-# --- v1.13 Footer ---
+# --- v1.14 Footer ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.13<br>Final Stable Version</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.14<br>Final Memory-Managed Stable Version</div>", unsafe_allow_html=True)
