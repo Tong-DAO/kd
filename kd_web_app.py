@@ -14,7 +14,6 @@ from huggingface_hub import hf_hub_download
 warnings.filterwarnings('ignore')
 
 # --- v1.0 (Core Configuration) ---
-# This block contains the stable, core configuration of the app.
 HF_REPO_ID = "Tong-DAO/REES"
 HF_REPO_TYPE = "dataset"
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
@@ -30,7 +29,6 @@ st.set_page_config(
 st.title("🌱 REEs Soil Kd Value Visualization System")
 
 # --- v1.0 (Core Data Loading Functions) ---
-# These functions are the stable foundation for data access.
 @st.cache_resource(show_spinner="Syncing data files from the cloud...")
 def get_hf_file_path(filename_in_repo):
     try:
@@ -56,7 +54,6 @@ def load_raster_data(filename_in_repo):
         return None
 
 # --- v1.0 (Core Utility and Processing Functions) ---
-# These helper functions perform stable, reusable tasks.
 def wgs84_to_albers(lon, lat, crs):
     try:
         x, y = coord_transform('EPSG:4326', crs, [lon], [lat])
@@ -85,24 +82,30 @@ def normalize_data(data, method):
         if max_val - min_val > 1e-10: return (data_copy - min_val) / (max_val - min_val), 0, 1
     return data_copy, np.min(valid_data), np.max(valid_data)
 
-def get_point_parameters(lon, lat, element, depth_suffix, data_info_for_crs):
+# >>>>> 【v1.03 修正点 1】: 将 get_point_parameters 恢复到最简单、最稳定的版本 <<<<<
+def get_point_parameters(lon, lat, element, depth_suffix, data_info):
+    """
+    获取单点所有参数。此函数现在逻辑清晰：只处理传入的 data_info。
+    """
     try:
-        x, y = wgs84_to_albers(lon, lat, data_info_for_crs['crs'])
+        x, y = wgs84_to_albers(lon, lat, data_info['crs'])
         if x is None: return None
-        row, col = rasterio.transform.rowcol(data_info_for_crs['transform'], x, y)
-        if not (0 <= row < data_info_for_crs['data'].shape[0] and 0 <= col < data_info_for_crs['data'].shape[1]): return None
+        row, col = rasterio.transform.rowcol(data_info['transform'], x, y)
+        if not (0 <= row < data_info['data'].shape[0] and 0 <= col < data_info['data'].shape[1]): return None
         
-        main_raster_file = f"prediction_result_{element}{depth_suffix}_raw.tif"
-        main_data_info = load_raster_data(main_raster_file)
-        kd_value = main_data_info['data'][row, col]
+        # 直接从传入的 data_info 中获取 Kd 值
+        kd_value = data_info['data'][row, col]
         if np.ma.is_masked(kd_value) or not np.isfinite(kd_value): return None
 
         params = {"Kd": float(kd_value)}
         param_files = {"pH": f"ph{depth_suffix}.tif", "SOM": f"soc{depth_suffix}.tif", "CEC": f"cec{depth_suffix}.tif", "Ce": f"{element}.tif"}
+        
+        # 辅助参数的加载方式保持不变
         for param_name, filename in param_files.items():
             try:
-                param_data = load_raster_data(filename)
-                value = param_data['data'][row, col]
+                # 使用独立的 load_raster_data 获取数据
+                param_data_info = load_raster_data(filename)
+                value = param_data_info['data'][row, col]
                 if param_name in ["pH", "CEC"]: value /= 100
                 elif param_name == "SOM": value = value * 1.724 / 100
                 params[param_name] = float(value)
@@ -110,12 +113,14 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info_for_crs):
         
         ec_file = "T_ECE.tif" if depth_suffix in ["05", "515", "1530"] else "S_ECE.tif"
         try:
-            ec_data = load_raster_data(ec_file)
-            ec_value = ec_data['data'][row, col]
+            ec_data_info = load_raster_data(ec_file)
+            ec_value = ec_data_info['data'][row, col]
             params["IS"] = float(max(0.0446 * ec_value - 0.000173, 0))
         except: st.toast("Failed to calculate Ionic Strength (IS)", icon="⚠️")
+        
         return params, (row, col)
-    except: return None
+    except:
+        return None, None
 
 def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point=None):
     try:
@@ -144,10 +149,8 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data
         st.error(f"Error creating map image: {e}"); return None
 
 # --- v1.02 NEW FEATURES ---
-# This block contains the new, modular functions for v1.02.
 @st.cache_data(show_spinner="Generating depth profile...")
 def get_depth_profile_data(lon, lat, element, base_data_info):
-    """Fetches Kd values for all depths at a single point."""
     depths = {"0-5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
     profile_data = {}
     try:
@@ -167,7 +170,6 @@ def get_depth_profile_data(lon, lat, element, base_data_info):
         return None
 
 def create_depth_profile_chart(profile_data, element):
-    """Creates a line chart for the depth profile."""
     if not profile_data: return None
     df = pd.DataFrame(list(profile_data.items()), columns=['Depth', 'Kd Value'])
     fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
@@ -180,7 +182,6 @@ def create_depth_profile_chart(profile_data, element):
     return fig
 
 # --- v1.0 (Core UI Sidebar) ---
-# The sidebar is part of the stable core UI.
 with st.sidebar:
     st.header("📊 Parameter Settings")
     element = st.selectbox("Rare Earth Element", ["La", "Ce", "Pr", "Nd", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Y"], key="element_select")
@@ -190,12 +191,12 @@ with st.sidebar:
     st.header("🔍 Coordinate Query")
     lon = st.number_input("Longitude", min_value=73.0, max_value=135.0, value=105.0, step=0.1, key="lon_input")
     lat = st.number_input("Latitude", min_value=18.0, max_value=53.0, value=35.0, step=0.1, key="lat_input")
+    # >>>>> 【v1.03 修正点 2】: 修复 use_container_width 警告 <<<<<
     query_button = st.button("🎯 Query Point", use_container_width=True, type="primary")
     st.markdown("---")
     show_stats = st.checkbox("Show Statistics", value=False)
 
 # --- v1.0 (Core Main Logic) ---
-# This is the main part of the app that orchestrates everything.
 depth_mapping = {"0-5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
 depth_suffix = depth_mapping[depth]
 raster_filename = f"prediction_result_{element}{depth_suffix}_raw.tif"
@@ -215,8 +216,10 @@ with col_left:
             stats_cols = st.columns(4); stats_cols[0].metric("Min", f"{np.min(valid_data):.4f}"); stats_cols[1].metric("Max", f"{np.max(valid_data):.4f}"); stats_cols[2].metric("Mean", f"{np.mean(valid_data):.4f}"); stats_cols[3].metric("Median", f"{np.median(valid_data):.4f}")
     
     if query_button:
-        result = get_point_parameters(lon, lat, element, depth_suffix, data_info)
-        st.session_state['query_result'], st.session_state['marker_point'] = result if result else (None, None)
+        # >>>>> 【v1.03 修正点 3】: 调用修正后的 get_point_parameters，传入正确的 data_info <<<<<
+        result, marker = get_point_parameters(lon, lat, element, depth_suffix, data_info)
+        st.session_state['query_result'] = result
+        st.session_state['marker_point'] = marker
     
     marker_point_to_display = st.session_state.get('marker_point', None)
     
@@ -227,11 +230,9 @@ with col_left:
     else: st.error("Failed to generate map image.")
 
 with col_right:
-    # --- v1.02 UI REFACTOR: Using Tabs ---
     tab1, tab2 = st.tabs(["📍 Query Results", "📈 Depth Profile Analysis"])
 
     with tab1:
-        # This part is mostly the original v1.0 query result display.
         if 'query_result' in st.session_state and st.session_state['query_result'] is not None:
             params = st.session_state['query_result']
             st.success("✅ Query Successful")
@@ -239,19 +240,13 @@ with col_right:
             st.markdown("---")
             st.markdown("**📊 Soil Parameters**")
             
-            param_display_df = pd.DataFrame([{"Parameter": k, "Value": f"{v:.2f}" if v >= 1 else f"{v:.4f}"} for k, v in params.items()])
+            param_display_df = pd.DataFrame(params.items(), columns=["Parameter", "Value"])
+            param_display_df['Value'] = param_display_df['Value'].apply(lambda v: f"{v:.2f}" if v >= 1 else f"{v:.4f}")
             st.dataframe(param_display_df, hide_index=True, use_container_width=True)
 
-            # --- v1.02 NEW FEATURE: Download Button ---
             csv = param_display_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download Results as CSV",
-                data=csv,
-                file_name=f'query_results_{element}_{lon}_{lat}.csv',
-                mime='text/csv',
-                use_container_width=True
-            )
-            # --- End of Download Button Feature ---
+            # >>>>> 【v1.03 修正点 2】: 修复 use_container_width 警告 <<<<<
+            st.download_button("📥 Download Results as CSV", csv, f'query_results_{element}_{lon}_{lat}.csv', 'text/csv', use_container_width=True, key='download_csv')
             
             with st.expander("📖 Parameter Description"):
                 st.markdown("- **Kd**: Distribution coefficient\n- **pH**: Soil acidity/alkalinity\n- **SOM**: Soil organic matter\n- **CEC**: Cation exchange capacity\n- **IS**: Ionic strength\n- **Ce**: Equilibrium concentration")
@@ -263,13 +258,13 @@ with col_right:
             st.dataframe(empty_df, hide_index=True, use_container_width=True)
 
     with tab2:
-        # --- v1.02 NEW FEATURE: Depth Profile Section ---
         st.header("Vertical Kd Distribution")
         st.info("Click the button below to analyze the Kd value variation with depth at the queried location.")
         
-        # Only show the button if a point has been successfully queried
         if 'query_result' in st.session_state and st.session_state['query_result'] is not None:
+            # >>>>> 【v1.03 修正点 2】: 修复 use_container_width 警告 <<<<<
             if st.button("Generate Depth Profile", use_container_width=True, type="primary"):
+                # 传入主循环加载的 data_info，仅用于获取坐标
                 profile_data = get_depth_profile_data(lon, lat, element, data_info)
                 if profile_data:
                     profile_chart = create_depth_profile_chart(profile_data, element)
@@ -278,8 +273,7 @@ with col_right:
                     st.error("Could not generate profile. Data might be missing for some depths at this location.")
         else:
             st.warning("Please query a point first in the 'Query Results' tab.")
-        # --- End of Depth Profile Feature ---
 
-# --- v1.02 NEW FEATURE: Updated Footer ---
+# --- v1.03 Footer ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.02<br>Now with Depth Profile Analysis and Data Download</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.03<br>Stable version with Depth Profile and Data Download</div>", unsafe_allow_html=True)
