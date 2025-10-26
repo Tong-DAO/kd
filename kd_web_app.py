@@ -17,9 +17,6 @@ warnings.filterwarnings('ignore')
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
 plt.rcParams['axes.unicode_minus'] = False
 
-# 移除所有中文字体相关的CSS
-# ==================== 字体设置结束 ====================
-
 # 页面配置
 st.set_page_config(
     page_title="REE Soil Kd Value Visualization",
@@ -31,8 +28,9 @@ st.set_page_config(
 # 应用标题
 st.title("🌱 REE Soil Kd Value Visualization System")
 
-# 设置数据目录
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+# 设置数据目录 - 优化路径处理
+current_dir = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(current_dir, "data")
 
 # 检查数据目录
 if not os.path.exists(DATA_DIR):
@@ -82,7 +80,7 @@ def normalize_data(data, method):
         return data_copy, 0, 1
             
     elif method == "Standard Deviation Normalization":
-        mean =极光 np.mean(valid_data)
+        mean = np.mean(valid_data)
         std = np.std(valid_data)
         if std > 1e-10:
             normalized = (data_copy - mean) / (2 * std) + 0.5
@@ -93,7 +91,7 @@ def normalize_data(data, method):
     elif method == "Linear Normalization":
         min_val = np.min(valid_data)
         max_val = np.max(valid_data)
-        if max_val - min_val > 1极光-10:
+        if max_val - min_val > 1e-10:
             normalized = (data_copy - min_val) / (max_val - min_val)
             return normalized, 0, 1
         return data_copy, 0, 1
@@ -121,6 +119,7 @@ def load_raster_data(file_path):
                 'bounds': bounds
             }
     except Exception as e:
+        st.error(f"Error loading raster data: {str(e)}")
         return None
 
 def get_point_parameters(lon, lat, element, depth_suffix, data_info):
@@ -146,7 +145,7 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
         param_files = {
             "pH": f"ph{depth_suffix}.tif",
             "SOM": f"soc{depth_suffix}.tif",
-            "CEC": f"cec{depth_suffix}.极光tif",
+            "CEC": f"cec{depth_suffix}.tif",
             "Ce": f"{element}.tif"
         }
         
@@ -161,8 +160,8 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
                         elif param_name == "SOM":
                             value = value * 1.724 / 100
                         params[param_name] = float(value)
-                except:
-                    pass
+                except Exception as e:
+                    st.warning(f"Failed to load {param_name}: {str(e)}")
         
         # Calculate IS
         ec_file = "T_ECE.tif" if depth_suffix in ["05", "515", "1530"] else "S_ECE.tif"
@@ -170,107 +169,112 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
         if os.path.exists(ec_path):
             try:
                 with rasterio.open(ec_path) as src:
-                    ec_value = src.read(1)[极光row, col]
+                    ec_value = src.read(1)[row, col]
                     is_value = max(0.0446 * ec_value - 0.000173, 0)
                     params["IS"] = float(is_value)
-            except:
-                pass
+            except Exception as e:
+                st.warning(f"Failed to calculate IS: {str(e)}")
         
         return params, (row, col)
         
-    except Exception:
+    except Exception as e:
+        st.error(f"Error getting point parameters: {str(e)}")
         return None
 
 def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point=None):
     """Create map image with optimized display"""
-    # Create new figure
-    fig = plt.figure(figsize=(12, 8), dpi=100)
-    ax = fig.add_subplot(111)
-    
-    # Choose colormap
-    if norm_method == "Raw Data":
-        cmap = 'viridis'
-    else:
-        cmap = create_enhanced_colormap()
-    
-    # ==================== Map Display Optimization ====================
-    # Get data bounds
-    bounds = data_info['bounds']
-    
-    # Calculate appropriate display range (reduce map scale, minimize whitespace)
-    width = bounds.right - bounds.left
-    height = bounds.top - bounds.bottom
-    
-    # Add appropriate margins (smaller than before)
-    margin_x = width * 0.05  # Only 5% margin
-    margin_y = height * 0.05
-    
-    # Set display range
-    extent = [
-        bounds.left - margin_x,
-        bounds.right + margin_x, 
-        bounds.bottom - margin_y,
-        bounds.top + margin_y
-    ]
-    
-    # Display data - use optimized range
-    im = ax.imshow(
-        display_data,
-        cmap=cmap,
-        vmin=vmin,
-        vmax=vmax,
-        extent=extent,  # Use optimized range
-        aspect='auto',   # Auto adjust aspect ratio
-        interpolation='nearest',
-        origin='upper'
-    )
-    # ==================== Map Display Optimization End ====================
-    
-    # Add colorbar
-    cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02)
-    cbar.set_label('Kd Value [L/g]', fontsize=10)
-    
-    # Set title
-    title_text = f'{element} Kd Distribution in {depth} Soil ({norm_method})'
-    ax.set_title(title_text, fontsize=12)
-    
-    # Set axis labels
-    ax.set_xlabel('East Coordinate (m)', fontsize=10)
-    ax.set_ylabel('North Coordinate (m)', fontsize=10)
-    
-    # Add grid - finer and lighter
-    ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
-    
-    # Add query point marker
-    if marker_point is not None:
-        row, col = marker_point
-        # Calculate actual coordinates of marker point
-        x, y = rasterio.transform.xy(data_info['transform'], row, col)
-        ax.plot(x, y, 'ro', markersize=10, markeredgecolor='white', markeredgewidth=2)
+    try:
+        # Create new figure
+        fig = plt.figure(figsize=(12, 8), dpi=100)
+        ax = fig.add_subplot(111)
         
-        label_text = 'Query Point'
-            
-        ax.annotate(
-            label_text,
-            xy=(x, y),
-            xytext=(x + width * 0.02, y - height * 0.02),
-            fontsize=9,
-            color='red',
-            arrowprops=dict(arrowstyle='->', color='red', lw=1.5)
+        # Choose colormap
+        if norm_method == "Raw Data":
+            cmap = 'viridis'
+        else:
+            cmap = create_enhanced_colormap()
+        
+        # ==================== Map Display Optimization ====================
+        # Get data bounds
+        bounds = data_info['bounds']
+        
+        # Calculate appropriate display range (reduce map scale, minimize whitespace)
+        width = bounds.right - bounds.left
+        height = bounds.top - bounds.bottom
+        
+        # Add appropriate margins (smaller than before)
+        margin_x = width * 0.05  # Only 5% margin
+        margin_y = height * 0.05
+        
+        # Set display range
+        extent = [
+            bounds.left - margin_x,
+            bounds.right + margin_x, 
+            bounds.bottom - margin_y,
+            bounds.top + margin_y
+        ]
+        
+        # Display data - use optimized range
+        im = ax.imshow(
+            display_data,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+            extent=extent,  # Use optimized range
+            aspect='auto',   # Auto adjust aspect ratio
+            interpolation='nearest',
+            origin='upper'
         )
-    
-    # Adjust layout - more compact
-    plt.tight_layout(pad=2.0)
-    
-    # Save to byte stream
-    buf = BytesIO()
-    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-    buf.seek(0)
-    
-    # Close figure
-    plt.close(fig)
-    
-    return buf
+        # ==================== Map Display Optimization End ====================
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02)
+        cbar.set_label('Kd Value [L/g]', fontsize=10)
+        
+        # Set title
+        title_text = f'{element} Kd Distribution in {depth} Soil ({norm_method})'
+        ax.set_title(title_text, fontsize=12)
+        
+        # Set axis labels
+        ax.set_xlabel('East Coordinate (m)', fontsize=10)
+        ax.set_ylabel('North Coordinate (m)', fontsize=10)
+        
+        # Add grid - finer and lighter
+        ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
+        
+        # Add query point marker
+        if marker_point is not None:
+            row, col = marker_point
+            # Calculate actual coordinates of marker point
+            x, y = rasterio.transform.xy(data_info['transform'], row, col)
+            ax.plot(x, y, 'ro', markersize=10, markeredgecolor='white', markeredgewidth=2)
+            
+            label_text = 'Query Point'
+                
+            ax.annotate(
+                label_text,
+                xy=(x, y),
+                xytext=(x + width * 0.02, y - height * 0.02),
+                fontsize=9,
+                color='red',
+                arrowprops=dict(arrowstyle='->', color='red', lw=1.5)
+            )
+        
+        # Adjust layout - more compact
+        plt.tight_layout(pad=2.0)
+        
+        # Save to byte stream
+        buf = BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        
+        # Close figure
+        plt.close(fig)
+        
+        return buf
+    except Exception as e:
+        st.error(f"Error creating map image: {str(e)}")
+        return None
 
 # Sidebar
 with st.sidebar:
@@ -300,7 +304,7 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         lon = st.number_input("Longitude", min_value=73.0, max_value=135.0, value=105.0, step=0.1)
-    with极光 col2:
+    with col2:
         lat = st.number_input("Latitude", min_value=18.0, max_value=53.0, value=35.0, step=0.1)
     
     query_button = st.button("🎯 Query Point", use_container_width=True, type="primary")
@@ -373,8 +377,11 @@ with col_left:
         with st.spinner('Generating map...'):
             img_buf = create_map_image(display_data, vmin, vmax, element, depth, norm_method, data_info, marker_point)
             
-        # Display image
-        st.image(img_buf, use_container_width=True)
+        if img_buf:
+            # Display image
+            st.image(img_buf, use_container_width=True)
+        else:
+            st.error("Failed to generate map image")
         
     except Exception as e:
         st.error(f"Map generation error: {str(e)}")
