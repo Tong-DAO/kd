@@ -28,7 +28,8 @@ st.set_page_config(
 
 st.title("🌱 REEs Soil Kd Value Visualization System")
 
-# --- Core Data Loading Functions ---
+# --- Core Data Loading and Utility Functions (Stable) ---
+
 @st.cache_resource(show_spinner="Syncing data files from the cloud...")
 def get_hf_file_path(filename_in_repo):
     try:
@@ -38,7 +39,6 @@ def get_hf_file_path(filename_in_repo):
     except Exception as e:
         st.error(f"Failed to download file '{filename_in_repo}': {e}"); st.stop()
 
-# 这个函数现在只负责从一个文件中读取一个点的值，非常轻量
 def get_value_from_raster(filename_in_repo, row, col):
     try:
         local_path = get_hf_file_path(filename_in_repo)
@@ -47,7 +47,6 @@ def get_value_from_raster(filename_in_repo, row, col):
     except:
         return None
 
-# 这个函数只加载主地图，并被缓存
 @st.cache_data
 def load_main_raster_data(filename_in_repo):
     local_file_path = get_hf_file_path(filename_in_repo)
@@ -61,7 +60,6 @@ def load_main_raster_data(filename_in_repo):
     except Exception as e:
         st.error(f"Error loading main raster file '{local_file_path}': {e}"); return None
 
-# --- Core Utility and Processing Functions ---
 def wgs84_to_albers(lon, lat, crs):
     try:
         x, y = coord_transform('EPSG:4326', crs, [lon], [lat]); return x[0], y[0]
@@ -81,7 +79,6 @@ def normalize_data(data, method):
     elif method == "Percentile Normalization":
         p5, p95 = np.percentile(valid_data, 5), np.percentile(valid_data, 95)
         if p95 - p5 > 1e-10: return np.clip((data_copy - p5) / (p95 - p5), 0, 1), 0, 1
-    # ... (other normalization methods are fine)
     return data_copy, np.min(valid_data), np.max(valid_data)
 
 
@@ -105,67 +102,84 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data
     except Exception as e:
         st.error(f"Error creating map image: {e}"); return None
 
-# >>>>> 【v1.10 核心重构】 <<<<<
-def get_all_point_data(lon, lat, element, selected_depth_suffix, data_info):
+@st.cache_data
+def get_all_point_data(lon, lat, element, crs, transform, shape):
     """
-    一次性获取一个点的所有深度数据和辅助参数。
-    这是现在唯一的、重量级的查询函数。
+    轻量级函数，一次性获取一个点的所有数据。
+    只接收可哈希的基本类型参数。
     """
     try:
-        x, y = wgs84_to_albers(lon, lat, data_info['crs'])
-        if x is None: return None, None
-        row, col = rasterio.transform.rowcol(data_info['transform'], x, y)
-        if not (0 <= row < data_info['data'].shape[0] and 0 <= col < data_info['data'].shape[1]): return None, None
+        x, y = wgs84_to_albers(lon, lat, crs)
+        if x is None: return None
+        row, col = rasterio.transform.rowcol(transform, x, y)
+        if not (0 <= row < shape[0] and 0 <= col < shape[1]): return None
 
-        # 检查主深度是否有数据
-        kd_value = data_info['data'][row, col]
-        if np.ma.is_masked(kd_value) or not np.isfinite(kd_value): return None, None
-
-        # --- 准备查询结果 ---
-        current_depth_params = {"Kd": float(kd_value)}
-        param_files = {"pH": f"ph{selected_depth_suffix}.tif", "SOM": f"soc{selected_depth_suffix}.tif", "CEC": f"cec{selected_depth_suffix}.tif", "Ce": f"{element}.tif"}
-        for param_name, filename in param_files.items():
-            value = get_value_from_raster(filename, row, col)
-            if value is not None:
-                if param_name in ["pH", "CEC"]: value /= 100
-                elif param_name == "SOM": value = value * 1.724 / 100
-                current_depth_params[param_name] = float(value)
-        ec_file = "T_ECE.tif" if selected_depth_suffix in ["05", "515", "1530"] else "S_ECE.tif"
-        ec_value = get_value_from_raster(ec_file, row, col)
-        if ec_value is not None: current_depth_params["IS"] = float(max(0.0446 * ec_value - 0.000173, 0))
-
-        # --- 准备深度剖面数据 ---
         depths = {"0-5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
-        depth_profile_data = {}
+        all_data = {}
+        
         for depth_label, depth_suffix in depths.items():
-            raster_file = f"prediction_result_{element}{depth_suffix}_raw.tif"
-            value = get_value_from_raster(raster_file, row, col)
-            if value is not None and np.isfinite(value):
-                depth_profile_data[depth_label] = float(value)
+            params = {}
+            # 获取 Kd 值
+            kd_file = f"prediction_result_{element}{depth_suffix}_raw.tif"
+            kd_value = get_value_from_raster(kd_file, row, col)
+            if kd_value is None or not np.isfinite(kd_value): continue
+            params['Kd'] = float(kd_value)
 
-        return current_depth_params, depth_profile_data, (row, col)
+            # 获取辅助参数
+            param_files = {"pH": f"ph{depth_suffix}.tif", "SOM": f"soc{depth_suffix}.tif", "CEC": f"cec{depth_suffix}.tif"}
+            for param_name, filename in param_files.items():
+                value = get_value_from_raster(filename, row, col)
+                if value is not None:
+                    if param_name in ["pH", "CEC"]: value /= 100
+                    elif param_name == "SOM": value = value * 1.724 / 100
+                    params[param_name] = float(value)
+            
+            ec_file = "T_ECE.tif" if depth_suffix in ["05", "515", "1530"] else "S_ECE.tif"
+            ec_value = get_value_from_raster(ec_file, row, col)
+            if ec_value is not None: params["IS"] = float(max(0.0446 * ec_value - 0.000173, 0))
+
+            ce_file = f"{element}.tif"
+            ce_value = get_value_from_raster(ce_file, row, col)
+            if ce_value is not None: params["Ce"] = float(ce_value)
+
+            all_data[depth_label] = params
+            
+        return all_data, (row, col)
 
     except:
-        return None, None, None
+        return None, None
 
-def create_depth_profile_chart(profile_data, element):
-    if not profile_data: return None
-    df = pd.DataFrame(list(profile_data.items()), columns=['Depth', 'Kd Value'])
+def create_depth_profile_chart(depth_profile_data, element):
+    if not depth_profile_data: return None
+    df = pd.DataFrame(depth_profile_data).T.reset_index()
+    df.rename(columns={'index': 'Depth'}, inplace=True)
+    if 'Kd' not in df.columns: return None
+    
     fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
-    ax.plot(df['Depth'], df['Kd Value'], marker='o', linestyle='-'); ax.set_xlabel('Soil Depth'); ax.set_ylabel('Kd Value [L/g]')
+    ax.plot(df['Depth'], df['Kd'], marker='o', linestyle='-'); ax.set_xlabel('Soil Depth'); ax.set_ylabel('Kd Value [L/g]')
     ax.set_title(f'Kd Value Depth Profile for {element}'); ax.grid(True, alpha=0.3); plt.tight_layout()
     return fig
+
+# >>>>> 【v1.11 核心修正】: 状态管理回调函数 <<<<<
+def reset_query_state():
+    """只要用户改变任何查询参数，就调用此函数清空旧结果。"""
+    st.session_state['query_result'] = None
+    st.session_state['marker_point'] = None
+    st.session_state['depth_profile_data'] = None
 
 # --- UI Sidebar ---
 with st.sidebar:
     st.header("📊 Parameter Settings")
-    element = st.selectbox("Rare Earth Element", ["La", "Ce", "Pr", "Nd", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Y"], help="Select a rare earth element to display")
-    depth = st.selectbox("Soil Depth", ["0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm"], help="Select a soil sampling depth")
+    element = st.selectbox("Rare Earth Element", ["La", "Ce", "Pr", "Nd", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Y"], help="Select a rare earth element to display", on_change=reset_query_state)
+    depth = st.selectbox("Soil Depth", ["0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm"], help="Select a soil sampling depth", on_change=reset_query_state)
     norm_method = st.selectbox("Normalization Method", ["Raw Data", "Percentile Normalization", "Standard Deviation Normalization", "Linear Normalization"], help="Select a data normalization method")
+    
     st.markdown("---"); st.header("🔍 Coordinate Query")
-    lon = st.number_input("Longitude", min_value=73.0, max_value=135.0, value=105.0, step=0.1)
-    lat = st.number_input("Latitude", min_value=18.0, max_value=53.0, value=35.0, step=0.1)
+    lon = st.number_input("Longitude", min_value=73.0, max_value=135.0, value=105.0, step=0.1, on_change=reset_query_state)
+    lat = st.number_input("Latitude", min_value=18.0, max_value=53.0, value=35.0, step=0.1, on_change=reset_query_state)
+    
     query_button = st.button("🎯 Query Point", use_container_width=True, type="primary")
+    
     st.markdown("---"); show_stats = st.checkbox("Show Statistics", value=False)
 
 # --- Main Logic ---
@@ -184,16 +198,12 @@ with col_left:
             stats_cols = st.columns(4); stats_cols[0].metric("Min", f"{np.min(valid_data):.4f}"); stats_cols[1].metric("Max", f"{np.max(valid_data):.4f}"); stats_cols[2].metric("Mean", f"{np.mean(valid_data):.4f}"); stats_cols[3].metric("Median", f"{np.median(valid_data):.4f}")
     
     if query_button:
-        st.session_state['query_result'] = None
-        st.session_state['depth_profile_data'] = None
-        st.session_state['marker_point'] = None
-        
         with st.spinner("Querying all parameters for the selected point..."):
-            params, profile_data, marker = get_all_point_data(lon, lat, element, depth_suffix, main_data_info)
+            all_data, marker = get_all_point_data(lon, lat, element, main_data_info['crs'], main_data_info['transform'], main_data_info['data'].shape)
         
-        if params:
-            st.session_state['query_result'] = params
-            st.session_state['depth_profile_data'] = profile_data
+        if all_data:
+            st.session_state['query_result'] = all_data.get(depth) # 获取当前选择深度的结果
+            st.session_state['depth_profile_data'] = all_data
             st.session_state['marker_point'] = marker
     
     marker_point_to_display = st.session_state.get('marker_point', None)
@@ -208,7 +218,7 @@ with col_right:
     tab1, tab2 = st.tabs(["📍 Query Results", "📈 Depth Profile Analysis"])
 
     with tab1:
-        if 'query_result' in st.session_state and st.session_state['query_result'] is not None:
+        if 'query_result' in st.session_state and st.session_state.get('query_result'):
             params = st.session_state['query_result']; st.success("✅ Query Successful")
             st.markdown(f"**📍 Location Information**\n- Longitude: {lon:.4f}°E\n- Latitude: {lat:.4f}°N\n- Element: {element}\n- Depth: {depth}")
             st.markdown("---"); st.markdown("**📊 Soil Parameters**")
@@ -217,12 +227,12 @@ with col_right:
             st.dataframe(param_display_df, hide_index=True, use_container_width=True)
 
             csv = param_display_df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Results as CSV", csv, f'query_results_{element}_{lon}_{lat}.csv', 'text/csv', use_container_width=True)
+            st.download_button("📥 Download Results as CSV", csv, f'query_results_{element}_{lon}_{lat}_{depth}.csv', 'text/csv', use_container_width=True)
             
             with st.expander("📖 Parameter Description"):
-                st.markdown("- **Kd**: ...") # Descriptions
+                st.markdown("- **Kd**: ...")
         else:
-            if query_button: st.warning("⚠️ No valid data at this location or out of range.")
+            if query_button: st.warning("⚠️ No valid data at this location or for the selected depth.")
             else: st.info("👆 Enter coordinates and click 'Query Point'.")
             st.markdown("**📊 Soil Parameters**")
             empty_df = pd.DataFrame({"Parameter": ["Kd", "pH", "SOM", "CEC", "IS", "Ce"], "Value": ["--"] * 6})
@@ -230,15 +240,14 @@ with col_right:
 
     with tab2:
         st.header("Vertical Kd Distribution")
-        # 这里现在直接从 session_state 读取深度剖面数据
-        if 'depth_profile_data' in st.session_state and st.session_state['depth_profile_data']:
+        if 'depth_profile_data' in st.session_state and st.session_state.get('depth_profile_data'):
             profile_data = st.session_state['depth_profile_data']
             st.info("Depth profile data has been generated based on your latest query.")
             profile_chart = create_depth_profile_chart(profile_data, element)
             st.pyplot(profile_chart)
         else:
-            st.warning("Please perform a successful query in the 'Query Results' tab to generate depth profile data.")
+            st.warning("Please perform a successful query in the 'Query Results' tab to view depth profile data.")
 
-# --- v1.10 Footer ---
+# --- v1.11 Footer ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.10<br>Final Stable Version with Memory Optimization</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>🌱 REEs Soil Kd Visualization System v1.11<br>Final Atomic State Management Version</div>", unsafe_allow_html=True)
