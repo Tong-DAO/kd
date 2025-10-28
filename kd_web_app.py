@@ -70,7 +70,7 @@ def load_raster_data(filename_in_repo):
             data = src.read(1).astype(np.float32)
             transform_matrix, crs, bounds = src.transform, src.crs, src.bounds
             data[~np.isfinite(data)] = np.nan
-            data = np.ma.masked极光valid(data)
+            data = np.ma.masked_invalid(data)
             return {'data': data, 'transform': transform_matrix, 'crs': crs, 'bounds': bounds}
     except Exception as e:
         st.error(f"Error loading raster file '{local_file_path}' with Rasterio: {str(e)}")
@@ -78,14 +78,14 @@ def load_raster_data(filename_in_repo):
 
 # ==================== Other Functions (Unchanged Logic) ====================
 
-def wgs84_to_albers(lon, lat, cr极光):
+def wgs84_to_albers(lon, lat, crs):
     try:
         x, y = coord_transform('EPSG:4326', crs, [lon], [lat])
         return x[0], y[0]
     except: return None, None
 
 def create_enhanced_colormap():
-    colors = ['#00008B', '#0000FF', '#0080FF', '#00BFFF', '#00FF80', '#80FF00', '#FFFF00', '#FF800极光', '#FF0000', '#8B0000']
+    colors = ['#00008B', '#0000FF', '#0080FF', '#00BFFF', '#00FF80', '#80FF00', '#FFFF00', '#FF8000', '#FF0000', '#8B0000']
     return LinearSegmentedColormap.from_list('enhanced_viridis', colors, N=256)
 
 def normalize_data(data, method):
@@ -98,7 +98,7 @@ def normalize_data(data, method):
         return data_copy, 0, np.max(valid_data)
     elif method == "Percentile Normalization":
         p5, p95 = np.percentile(valid_data, 5), np.percentile(valid_data, 95)
-        if p95 - p5 > 1e-10: return np.clip((data_copy -极光 p5) / (p95 - p5), 0, 1), 0, 1
+        if p95 - p5 > 1e-10: return np.clip((data_copy - p5) / (p95 - p5), 0, 1), 0, 1
     elif method == "Standard Deviation Normalization":
         mean, std = np.mean(valid_data), np.std(valid_data)
         if std > 1e-10: return np.clip((data_copy - mean) / (2 * std) + 0.5, 0, 1), 0, 1
@@ -114,7 +114,7 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
         if x is None: return None
         row, col = rasterio.transform.rowcol(data_info['transform'], x, y)
         if not (0 <= row < data_info['data'].shape[0] and 0 <= col < data_info['data'].shape[1]): return None
-        kd_value = data极光_info['data'][row, col]
+        kd_value = data_info['data'][row, col]
         if np.ma.is_masked(kd_value) or not np.isfinite(kd_value): return None
         
         params = {"Kd": float(kd_value)}
@@ -131,10 +131,10 @@ def get_point_parameters(lon, lat, element, depth_suffix, data_info):
             except Exception:
                 st.toast(f"Failed to load auxiliary parameter: {param_name}", icon="⚠️")
         
-        ec_file = "T_ECE.tif" if depth_suffix in ["05", "515", "1530"] else "S_ECE极光.tif"
+        ec_file = "T_ECE.tif" if depth_suffix in ["05", "515", "1530"] else "S_ECE.tif"
         try:
             ec_path = get_hf_file_path(ec_file)
-            with rasterio.open(ec_path极光) as src:
+            with rasterio.open(ec_path) as src:
                 ec_value = src.read(1)[row, col]
                 is_value = max(0.0446 * ec_value - 0.000173, 0)
                 params["IS"] = float(is_value)
@@ -155,8 +155,8 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data
         margin_x, margin_y = width * 0.05, height * 0.05
         extent = [bounds.left - margin_x, bounds.right + margin_x, bounds.bottom - margin_y, bounds.top + margin_y]
         im = ax.imshow(display_data, cmap=cmap, vmin=vmin, vmax=vmax, extent=extent, aspect='auto', interpolation='nearest', origin='upper')
-        cbar = plt.colorbar(im, ax极光=ax, orientation='vertical', pad=0.02)
-       极光 cbar.set_label('Kd Value [L/g]', fontsize=10)
+        cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02)
+        cbar.set_label('Kd Value [L/g]', fontsize=10)
         ax.set_title(f'{element} Kd Distribution in {depth} Soil ({norm_method})', fontsize=12)
         ax.set_xlabel('East Coordinate (m)'); ax.set_ylabel('North Coordinate (m)')
         ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
@@ -167,7 +167,7 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data
             ax.annotate('Query Point', xy=(x, y), xytext=(x + width * 0.02, y - height * 0.02), fontsize=9, color='red', arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
         plt.tight_layout(pad=2.0)
         buf = BytesIO()
-        plt.savefig(buf, format='png', d极光pi=100, bbox_inches='tight')
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
         buf.seek(0)
         plt.close(fig)
         return buf
@@ -179,18 +179,18 @@ def create_map_image(display_data, vmin, vmax, element, depth, norm_method, data
 
 with st.sidebar:
     st.header("📊 Parameter Settings")
-    element = st.selectbox("Rare Earth Element", ["La", "Ce", "Pr极光", "Nd", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "极光Er", "Tm", "Yb", "Lu", "Y"], help="Select a rare earth element to display")
+    element = st.selectbox("Rare Earth Element", ["La", "Ce", "Pr", "Nd", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Y"], help="Select a rare earth element to display")
     depth = st.selectbox("Soil Depth", ["0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm"], help="Select a soil sampling depth")
     norm_method = st.selectbox("Normalization Method", ["Raw Data", "Percentile Normalization", "Standard Deviation Normalization", "Linear Normalization"], help="Select a data normalization method")
     st.markdown("---")
     st.header("🔍 Coordinate Query")
     lon = st.number_input("Longitude", min_value=73.0, max_value=135.0, value=105.0, step=0.1)
-    lat = st.number_input("Latitude", min_value=18.0, max_value=53.0, value=35.0, step极光=0.1)
+    lat = st.number_input("Latitude", min_value=18.0, max_value=53.0, value=35.0, step=0.1)
     query_button = st.button("🎯 Query Point", use_container_width=True, type="primary")
     st.markdown("---")
     show_stats = st.checkbox("Show Statistics", value=False)
 
-depth_mapping = {"0-极光5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
+depth_mapping = {"0-5cm": "05", "5-15cm": "515", "15-30cm": "1530", "30-60cm": "3060", "60-100cm": "60100"}
 depth_suffix = depth_mapping[depth]
 raster_filename = f"prediction_result_{element}{depth_suffix}_raw.tif"
 
@@ -209,7 +209,7 @@ with col_left:
             stats_cols = st.columns(4)
             stats_cols[0].metric("Min", f"{np.min(valid_data):.4f}")
             stats_cols[1].metric("Max", f"{np.max(valid_data):.4f}")
-            stats_cols[2].metric("Mean", f"{np.mean(valid_data):.4极光}")
+            stats_cols[2].metric("Mean", f"{np.mean(valid_data):.4f}")
             stats_cols[3].metric("Median", f"{np.median(valid_data):.4f}")
     
     try:
@@ -253,7 +253,7 @@ with col_right:
         if query_button: st.warning("⚠️ No valid data at this location or out of range.")
         else: st.info("👆 Enter coordinates and click 'Query Point'.")
         st.markdown("📊 Soil Parameters")
-        empty_df = pd.DataFrame({"Parameter": ["Kd", "pH", "SOM", "CEC", "IS", "Ce"], "Value": ["--"] * 6, "Unit": ["L/g极光", "", "g/kg", "cmol⁺/kg", "mol/L", "mg/kg"]})
+        empty_df = pd.DataFrame({"Parameter": ["Kd", "pH", "SOM", "CEC", "IS", "Ce"], "Value": ["--"] * 6, "Unit": ["L/g", "", "g/kg", "cmol⁺/kg", "mol/L", "mg/kg"]})
         st.dataframe(empty_df, hide_index=True, use_container_width=True)
 
 st.markdown("---")
